@@ -1,17 +1,25 @@
-from tkinter import Tk, Frame, ttk, LabelFrame
+import sys
+from PyQt6.QtWidgets import QApplication, QMainWindow
 
-from UI.root import create_root
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        
 
 def main():
-    create_root()
-
-
-
-
-
-
-
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
     
+    sys.exit(app.exec())
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
     main()
