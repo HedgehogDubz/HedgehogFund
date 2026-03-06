@@ -1,18 +1,7 @@
-import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow
-
-
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        
+from UI.main_UI import start_UI
 
 def main():
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    
-    sys.exit(app.exec())
+    start_UI()
 
 
 
