@@ -1,14 +1,49 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton
-from PyQt6.QtGui import QPainter, QColor, QPen
+from PyQt6.QtGui import QPainter, QColor, QPen, QDrag
+from PyQt6.QtCore import Qt, QMimeData
 from UI._style_guide import bg, black, border_color
 import math
 
+class DraggableTabButton(QPushButton):
+    def __init__(self, text, dock, index):
+        super().__init__(text)
+        self.dock = dock
+        self.index = index
+        self.drag_start_position = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.drag_start_position = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.MouseButton.LeftButton):
+            return
+        if self.drag_start_position is None:
+            return
+        if (event.pos() - self.drag_start_position).manhattanLength() < 10:
+            return
+
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        mime_data.setText("dockable_window")
+        drag.setMimeData(mime_data)
+
+        Dock._drag_source_dock = self.dock
+        Dock._drag_window_index = self.index
+
+        drag.exec(Qt.DropAction.MoveAction)
+
 class Dock(QFrame):
+    _drag_source_dock = None
+    _drag_window_index = None
+
     def __init__(self, parent, dockable_windows, x_ratio, y_ratio, w_ratio, h_ratio):
         self.parent = parent
         super().__init__(parent.centralWidget())
 
         self.setStyleSheet(f"background-color: {black}; margin: 0px;")
+        self.setAcceptDrops(True)
 
         self.x_ratio = x_ratio
         self.y_ratio = y_ratio
@@ -42,7 +77,7 @@ class Dock(QFrame):
         self.tab_bar.setSpacing(0)
 
         for i, dw_class in enumerate(dockable_windows):
-            tab_button = QPushButton(dw_class.__name__)
+            tab_button = DraggableTabButton(dw_class.__name__, self, i)
             tab_button.setFlat(True)
             tab_button.setStyleSheet(f"background-color: {black}; color: white; border: none; padding: 5px 10px; margin: 0px;")
             tab_button.setContentsMargins(0, 0, 0, 0)
@@ -101,4 +136,69 @@ class Dock(QFrame):
                     button.setStyleSheet(f"background-color: {bg}; color: white; border: none; padding: 5px 10px; margin: 0px; border-top-left-radius: 5px; border-top-right-radius: 5px;")
                 else:
                     button.setStyleSheet(f"background-color: {black}; color: white; border: none; padding: 5px 10px; margin: 0px; border-top-left-radius: 5px; border-top-right-radius: 5px;")
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text() == "dockable_window":
+            if Dock._drag_source_dock is not None and Dock._drag_source_dock != self:
+                event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasText() and event.mimeData().text() == "dockable_window":
+            if Dock._drag_source_dock is not None and Dock._drag_source_dock != self:
+                event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        if Dock._drag_source_dock is not None and Dock._drag_window_index is not None:
+            source_dock = Dock._drag_source_dock
+            window_index = Dock._drag_window_index
+
+            if source_dock != self:
+                dockable_window = source_dock.dockable_windows[window_index]
+                window_name = dockable_window.__class__.__name__
+
+                source_dock.remove_dockable_window(window_index)
+                self.add_dockable_window(dockable_window, window_name)
+
+                event.acceptProposedAction()
+
+            Dock._drag_source_dock = None
+            Dock._drag_window_index = None
+
+    def remove_dockable_window(self, index):
+        if 0 <= index < len(self.dockable_windows):
+            dw = self.dockable_windows.pop(index)
+            button = self.tab_buttons.pop(index)
+
+            self.layout.removeWidget(dw)
+            self.tab_bar.removeWidget(button)
+            button.deleteLater()
+
+            for i, btn in enumerate(self.tab_buttons):
+                btn.index = i
+                btn.clicked.disconnect()
+                btn.clicked.connect(lambda _, idx=i: self.switch_tab(idx))
+
+            if self.dockable_windows:
+                self.dockIndex = min(self.dockIndex, len(self.dockable_windows) - 1)
+                self.switch_tab(self.dockIndex)
+            else:
+                self.dockIndex = 0
+
+    def add_dockable_window(self, dockable_window, window_name):
+        index = len(self.dockable_windows)
+
+        tab_button = DraggableTabButton(window_name, self, index)
+        tab_button.setFlat(True)
+        tab_button.setStyleSheet(f"background-color: {black}; color: white; border: none; padding: 5px 10px; margin: 0px;")
+        tab_button.setContentsMargins(0, 0, 0, 0)
+        tab_button.clicked.connect(lambda _, idx=index: self.switch_tab(idx))
+        self.tab_buttons.append(tab_button)
+        self.tab_bar.addWidget(tab_button)
+
+        dockable_window.setParent(self)
+        dockable_window.hide()
+        self.dockable_windows.append(dockable_window)
+        self.layout.addWidget(dockable_window, 1)
+
+        self.switch_tab(index)
 
