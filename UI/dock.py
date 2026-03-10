@@ -1,5 +1,5 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QLabel, QApplication
-from PyQt6.QtGui import QPainter, QColor, QPen, QCursor, QPixmap
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QLabel, QApplication, QMenu
+from PyQt6.QtGui import QPainter, QColor, QPen, QCursor, QPixmap, QAction
 from PyQt6.QtCore import Qt, QPoint
 from UI._style_guide import bg, black, border_color
 import math
@@ -199,11 +199,10 @@ class DraggableTabButton(QPushButton):
                 source_dock.remove_panel(window_index)
                 target_dock.add_panel(panel, window_name, insert_index)
             else:
+                # Dropped back in same position - just switch to that tab
                 target_dock._hide_drop_preview()
                 self.show()
-                if 0 <= window_index < len(source_dock.panels):
-                    source_dock.panels[window_index].show()
-                    source_dock.dockIndex = window_index
+                source_dock.switch_tab(window_index)
         else:
             # Moving between docks
             # IMPORTANT: Hide preview BEFORE removing panel to avoid layout corruption
@@ -334,7 +333,6 @@ class Dock(QFrame):
         self.tab_bar.setContentsMargins(0, 0, 0, 0)
         self.tab_bar.setSpacing(0)
         self.tab_bar.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self.tab_bar.addStretch()
 
         for i, panel_class in enumerate(panels):
             tab_button = DraggableTabButton(panel_class.__name__, self, i)
@@ -344,11 +342,13 @@ class Dock(QFrame):
             tab_button.setAcceptDrops(False)
             tab_button.clicked.connect(lambda _, index=i: self.switch_tab(index))
             self.tab_buttons.append(tab_button)
-            self.tab_bar.insertWidget(i, tab_button)
+            self.tab_bar.addWidget(tab_button)
 
             panel_instance = panel_class(self, True, 0, 0, int(math.ceil(self.w_ratio * parent.width())), int(math.ceil(self.h_ratio * parent.height())))
             panel_instance.hide()
             self.panels.append(panel_instance)
+
+        self.tab_bar.addStretch()
 
         self.layout.addWidget(self.tab_bar_widget, 0)
 
@@ -357,6 +357,9 @@ class Dock(QFrame):
 
         if self.panels:
             self.switch_tab(0)
+
+        # Ensure the dock is above connectors in z-order
+        self.raise_()
 
     def update_geometry(self):
         parent_width = self.parent.width()
@@ -386,6 +389,21 @@ class Dock(QFrame):
         painter.setPen(pen)
 
         painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
+
+    def contextMenuEvent(self, event):
+        """Show context menu on right-click"""
+        menu = QMenu(self)
+
+        delete_action = QAction("Delete Dock", self)
+        delete_action.triggered.connect(self.delete_dock)
+        menu.addAction(delete_action)
+
+        menu.exec(event.globalPos())
+
+    def delete_dock(self):
+        """Delete this dock and redistribute its space to neighbors"""
+        if hasattr(self.parent, 'delete_dock'):
+            self.parent.delete_dock(self)
 
     def switch_tab(self, index):
         if 0 <= index < len(self.panels):
@@ -614,15 +632,17 @@ class Dock(QFrame):
         Dock._preview_dock = self
 
     def _hide_drop_preview(self):
-        if not self.preview_active:
-            return
-
+        # Always try to remove preview button, even if preview_active is False
+        # This ensures we don't leave orphaned preview buttons
         if self.preview_button is not None:
             self.preview_button.hide()
             self.tab_bar.removeWidget(self.preview_button)
             self.preview_button.setParent(None)
             self.preview_button.deleteLater()
             self.preview_button = None
+
+        if not self.preview_active:
+            return
 
         if Dock._drag_source_dock and Dock._drag_window_index is not None:
             source_dock = Dock._drag_source_dock
@@ -727,6 +747,10 @@ class Dock(QFrame):
             btn.index = i
             btn.clicked.disconnect()
             btn.clicked.connect(lambda _, idx=i: self.switch_tab(idx))
+
+        # Hide all panels before switching to ensure only one is visible
+        for p in self.panels:
+            p.hide()
 
         self.switch_tab(insert_index)
 

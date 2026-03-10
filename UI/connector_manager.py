@@ -86,11 +86,9 @@ class ConnectorManager(QObject):
     def eventFilter(self, obj, event):
         """Filter events on the parent widget to handle connector interactions."""
 
-        # Process events from any widget, but avoid duplicate processing
-        # by tracking the last event we handled
+        # Process mouse events
         event_type = event.type()
 
-        # Only process mouse events
         if event_type not in [
             QEvent.Type.MouseMove,
             QEvent.Type.MouseButtonPress,
@@ -110,7 +108,6 @@ class ConnectorManager(QObject):
                 event.timestamp() if hasattr(event, "timestamp") else 0,
             )
 
-            # Skip if we just processed this exact event
             if self.last_processed_event == event_id:
                 return False
 

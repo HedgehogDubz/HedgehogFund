@@ -47,3 +47,7 @@ class TestTab(Tab):
         self.add_connector(HConnector(self, self.left_dock_end_ratio, [left_dock], [top_dock, bottom_dock]))
         self.add_connector(HConnector(self, 1-self.right_dock_end_ratio, [top_dock, bottom_dock], [right_dock]))
         self.add_connector(VConnector(self, self.top_dock_end_ratio, [top_dock], [bottom_dock]))
+
+        # Raise all docks above connectors to prevent connectors from blocking tab buttons
+        for dock in [left_dock, right_dock, top_dock, bottom_dock]:
+            dock.raise_()
