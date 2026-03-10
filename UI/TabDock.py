@@ -1,14 +1,17 @@
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QPushButton
 from UI._style_guide import bg, black
+from UI.connector_manager import ConnectorManager
 
 class TabDock(QWidget):
-    def __init__(self, parent=None, create_external_docks=False):
+    def __init__(self, parent=None, create_external_docks=False, min_dock_size=100):
         super().__init__(parent)
 
         self.tabIndex = 0
         self.tabs = []
         self.docks = []
-        
+        self.connectors = []
+        self.min_dock_size = min_dock_size
+
         self.tab_buttons = []
 
         self.main_layout = QVBoxLayout(self)
@@ -33,6 +36,8 @@ class TabDock(QWidget):
 
         self.create_external_docks = create_external_docks
 
+        self.connector_manager = ConnectorManager(self.tab_content_widget)
+
     def add_tab(self, tab):
         index = len(self.tabs)
         self.tabs.append(tab)
@@ -54,6 +59,19 @@ class TabDock(QWidget):
 
     def add_dock(self, dock):
         self.docks.append(dock)
+
+    def remove_dock(self, dock):
+        if dock in self.docks:
+            self.docks.remove(dock)
+
+    def add_connector(self, connector):
+        self.connectors.append(connector)
+        self.connector_manager.add_connector(connector)
+
+    def remove_connector(self, connector):
+        if connector in self.connectors:
+            self.connectors.remove(connector)
+            self.connector_manager.remove_connector(connector)
 
     def switch_tab(self, index):
         if 0 <= index < len(self.tabs):

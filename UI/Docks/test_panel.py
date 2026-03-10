@@ -1,6 +1,6 @@
-from UI.dockable_window import DockableWindow
+from UI.panel import Panel
 
-class TestDock (DockableWindow):
+class TestPanel (Panel):
     def __init__(self, parent, docked, x, y, w, h):
         super().__init__(parent, docked, x, y, w, h)
         self.parent = parent

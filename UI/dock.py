@@ -1,8 +1,35 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton
-from PyQt6.QtGui import QPainter, QColor, QPen, QDrag, QCursor, QPixmap
-from PyQt6.QtCore import Qt, QMimeData, QPoint
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QLabel, QApplication
+from PyQt6.QtGui import QPainter, QColor, QPen, QCursor, QPixmap
+from PyQt6.QtCore import Qt, QPoint
 from UI._style_guide import bg, black, border_color
 import math
+
+class DragPreviewWidget(QWidget):
+    """Floating widget that shows a preview of the tab being dragged"""
+    def __init__(self, text, size):
+        super().__init__()
+        self.setWindowFlags(
+            Qt.WindowType.ToolTip |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+
+        self.setFixedSize(size)
+
+        self.button_text = text
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        painter.setOpacity(1.0)
+        painter.fillRect(self.rect(), QColor(bg))
+
+        painter.setOpacity(1.0)
+        painter.setPen(QColor("white"))
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.button_text)
 
 class DraggableTabButton(QPushButton):
     def __init__(self, text, dock, index):
@@ -10,6 +37,8 @@ class DraggableTabButton(QPushButton):
         self.dock = dock
         self.index = index
         self.drag_start_position = None
+        self.drag_preview = None
+        self.is_dragging = False
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -21,65 +50,166 @@ class DraggableTabButton(QPushButton):
             return
         if self.drag_start_position is None:
             return
-        if (event.pos() - self.drag_start_position).manhattanLength() < 10:
-            return
 
-        Dock._drag_source_dock = self.dock
-        Dock._drag_window_index = self.index
-
-        # Hide the original tab button while dragging
-        self.hide()
-
-        drag = QDrag(self)
-        mime_data = QMimeData()
-        mime_data.setText("dockable_window")
-        drag.setMimeData(mime_data)
-
-        # Create a pixmap that looks like the tab button for visual feedback
-        pixmap = QPixmap(self.size())
-        pixmap.fill(Qt.GlobalColor.transparent)
-
-        # Render the button onto the pixmap
-        painter = QPainter(pixmap)
-        painter.setOpacity(0.7)  # Make it semi-transparent
-
-        # Draw the button background
-        painter.fillRect(pixmap.rect(), QColor(bg))
-
-        # Draw the button text
-        painter.setPen(QColor("white"))
-        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, self.text())
-        painter.end()
-
-        drag.setPixmap(pixmap)
-        drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
-
-        # Start drag - this will block until drop or cancel
-        result = drag.exec(Qt.DropAction.MoveAction)
-
-        # Handle the result of the drag operation
-        if result != Qt.DropAction.MoveAction:
-            # Check if drag state was already cleared (drop was handled by a Dock)
-            if Dock._drag_source_dock is None:
-                # Drop was handled, nothing to do
+        if not self.is_dragging:
+            if (event.pos() - self.drag_start_position).manhattanLength() < 10:
                 return
 
-            # Drag was not accepted by any widget - check if we should create external dock
+            self.is_dragging = True
+            Dock._drag_source_dock = self.dock
+            Dock._drag_window_index = self.index
+
+            self.hide()
+
+            self.dock._hide_dragged_tab(self.index)
+
+            self.drag_preview = DragPreviewWidget(self.text(), self.size())
+            self.drag_preview.show()
+
+            self.grabMouse()
+
+        if self.drag_preview:
+            cursor_pos = QCursor.pos()
+            self.drag_preview.move(
+                cursor_pos.x() - self.drag_preview.width() // 2,
+                cursor_pos.y() - self.drag_preview.height() // 2
+            )
+
+            self._update_drop_targets(cursor_pos)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.is_dragging:
+            self.releaseMouse()
+
+            if self.drag_preview:
+                self.drag_preview.close()
+                self.drag_preview.deleteLater()
+                self.drag_preview = None
+
+            # Handle the drop
+            self._handle_drop(QCursor.pos())
+
+            # Clean up all preview buttons in all docks
+            app = QApplication.instance()
+            for widget in app.allWidgets():
+                if isinstance(widget, Dock):
+                    widget._hide_drop_preview()
+
+            # Only show the dragged tab if it still exists in the source dock
+            # (it won't exist if it was moved to a different dock)
+            if Dock._drag_source_dock and Dock._drag_window_index is not None:
+                if Dock._drag_window_index < len(Dock._drag_source_dock.tab_buttons):
+                    Dock._drag_source_dock._show_dragged_tab(Dock._drag_window_index)
+
+            self.is_dragging = False
+            self.drag_start_position = None
+        else:
+            super().mouseReleaseEvent(event)
+
+    def _update_drop_targets(self, global_pos):
+        app = QApplication.instance()
+
+        if self.drag_preview:
+            self.drag_preview.hide()
+
+        widget_at_cursor = app.widgetAt(global_pos)
+
+        target_dock = None
+        current = widget_at_cursor
+        while current:
+            if isinstance(current, Dock):
+                target_dock = current
+                break
+            current = current.parentWidget()
+
+        all_docks = [widget for widget in app.allWidgets() if isinstance(widget, Dock)]
+
+        if target_dock:
+            local_pos = target_dock.mapFromGlobal(global_pos)
+            if target_dock._is_over_tab_bar(local_pos):
+                target_dock._update_drop_preview(local_pos)
+                for dock in all_docks:
+                    if dock != target_dock:
+                        dock._hide_drop_preview()
+            else:
+                for dock in all_docks:
+                    dock._hide_drop_preview()
+                if self.drag_preview:
+                    self.drag_preview.show()
+        else:
+            for dock in all_docks:
+                dock._hide_drop_preview()
+            if self.drag_preview:
+                self.drag_preview.show()
+
+    def _handle_drop(self, global_pos):
+        """Handle the drop at the given global position"""
+        app = QApplication.instance()
+        widget_at_cursor = app.widgetAt(global_pos)
+
+        # Find the Dock widget if cursor is over one
+        target_dock = None
+        current = widget_at_cursor
+        while current:
+            if isinstance(current, Dock):
+                target_dock = current
+                break
+            current = current.parentWidget()
+
+        if target_dock:
+            #internal dock
+            local_pos = target_dock.mapFromGlobal(global_pos)
+
+            if target_dock._is_over_tab_bar(local_pos):
+                self._handle_tab_move(target_dock, local_pos)
+            else:
+                self._create_external_dock()
+        else:
+            # external dock
             tab_dock = self._get_tab_dock()
             if tab_dock and hasattr(tab_dock, 'create_external_docks') and tab_dock.create_external_docks:
-                # Create external dock at cursor position (user dragged outside app window)
                 self._create_external_dock()
-                return
-
-            # Drag was truly cancelled, show the button again
-            try:
+            else:
                 self.show()
-            except RuntimeError:
-                # Button was already deleted, ignore
-                pass
 
-            Dock._drag_source_dock = None
-            Dock._drag_window_index = None
+        # Clear drag state
+        Dock._drag_source_dock = None
+        Dock._drag_window_index = None
+
+    def _handle_tab_move(self, target_dock, local_pos):
+        """Move tab to target dock at the drop position"""
+        source_dock = Dock._drag_source_dock
+        window_index = Dock._drag_window_index
+
+        if source_dock is None or window_index is None:
+            return
+
+        panel = source_dock.panels[window_index]
+        window_name = panel.__class__.__name__
+
+        insert_index = target_dock._calculate_insert_index(local_pos)
+
+        if source_dock == target_dock:
+            # Reordering within same dock
+            if insert_index > window_index:
+                insert_index -= 1
+            if insert_index != window_index:
+                # IMPORTANT: Hide preview BEFORE removing panel to avoid layout corruption
+                target_dock._hide_drop_preview()
+                source_dock.remove_panel(window_index)
+                target_dock.add_panel(panel, window_name, insert_index)
+            else:
+                target_dock._hide_drop_preview()
+                self.show()
+                if 0 <= window_index < len(source_dock.panels):
+                    source_dock.panels[window_index].show()
+                    source_dock.dockIndex = window_index
+        else:
+            # Moving between docks
+            # IMPORTANT: Hide preview BEFORE removing panel to avoid layout corruption
+            target_dock._hide_drop_preview()
+            source_dock.remove_panel(window_index)
+            target_dock.add_panel(panel, window_name, insert_index)
 
     def _get_tab_dock(self):
         """Get the TabDock instance from the parent chain, or ExternalDock if applicable"""
@@ -93,12 +223,8 @@ class DraggableTabButton(QPushButton):
             if isinstance(dock_parent, ExternalDock):
                 return dock_parent
 
-            # Tab has a parent attribute (TabDock instance)
-            # We need to access the attribute, not call the parent() method
-            # Use __dict__ to get the actual attribute
             if hasattr(dock_parent, '__dict__') and 'parent' in dock_parent.__dict__:
                 tab_dock = dock_parent.__dict__['parent']
-                # Verify it's actually a TabDock with create_external_docks attribute
                 if hasattr(tab_dock, 'create_external_docks'):
                     return tab_dock
         except Exception:
@@ -107,30 +233,25 @@ class DraggableTabButton(QPushButton):
         return None
 
     def _create_external_dock(self):
-        """Create an external floating dock with the dragged window"""
+        """Create an external floating dock with the dragged panel"""
         if Dock._drag_source_dock is None or Dock._drag_window_index is None:
             return
 
         source_dock = Dock._drag_source_dock
         window_index = Dock._drag_window_index
 
-        # Get the dockable window
-        dockable_window = source_dock.dockable_windows[window_index]
-        window_name = dockable_window.__class__.__name__
+        # Get the panel
+        panel = source_dock.panels[window_index]
+        panel_name = panel.__class__.__name__
 
-        # Create the external dock window
-        external_dock = ExternalDock(window_name)
+        external_dock = ExternalDock(panel_name)
+        source_dock.remove_panel(window_index)
 
-        # Remove from source dock
-        source_dock.remove_dockable_window(window_index)
+        external_dock.dock.add_panel(panel, panel_name, 0, is_external=True)
 
-        # Add to external dock
-        external_dock.dock.add_dockable_window(dockable_window, window_name, 0, is_external=True)
-
-        # Position at cursor and show
         cursor_pos = QCursor.pos()
-        external_dock.move(cursor_pos.x() - 100, cursor_pos.y() - 20)
         external_dock.show()
+        external_dock.move(cursor_pos.x() - 40, cursor_pos.y() - 43)
 
 class ExternalDock(QWidget):
     """A floating window that contains a single Dock"""
@@ -149,7 +270,6 @@ class ExternalDock(QWidget):
         layout.setSpacing(0)
 
         # Create a dock that fills this window
-        # The dock needs a parent with centralWidget(), width(), height() methods
         self.dock = Dock(self, [], 0, 0, 1, 1)
         layout.addWidget(self.dock)
 
@@ -168,8 +288,9 @@ class ExternalDock(QWidget):
 class Dock(QFrame):
     _drag_source_dock = None
     _drag_window_index = None
+    _preview_dock = None
 
-    def __init__(self, parent, dockable_windows, x_ratio, y_ratio, w_ratio, h_ratio):
+    def __init__(self, parent, panels, x_ratio, y_ratio, w_ratio, h_ratio):
         self.parent = parent
         super().__init__(parent.centralWidget())
 
@@ -194,8 +315,8 @@ class Dock(QFrame):
         self.setGeometry(dock_x, dock_y, dock_w, dock_h)
 
         self.dockIndex = 0
-        self.dockable_windows_classes = dockable_windows
-        self.dockable_windows = []
+        self.panel_classes = panels
+        self.panels = []
         self.tab_buttons = []
 
         self.layout = QVBoxLayout(self)
@@ -207,6 +328,7 @@ class Dock(QFrame):
         self.tab_bar_widget.setContentsMargins(0, 0, 0, 0)
         self.tab_bar_widget.setAcceptDrops(False)
         self.tab_bar_widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.tab_bar_widget.setFixedHeight(25)
 
         self.tab_bar = QHBoxLayout(self.tab_bar_widget)
         self.tab_bar.setContentsMargins(0, 0, 0, 0)
@@ -214,8 +336,8 @@ class Dock(QFrame):
         self.tab_bar.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self.tab_bar.addStretch()
 
-        for i, dw_class in enumerate(dockable_windows):
-            tab_button = DraggableTabButton(dw_class.__name__, self, i)
+        for i, panel_class in enumerate(panels):
+            tab_button = DraggableTabButton(panel_class.__name__, self, i)
             tab_button.setFlat(True)
             tab_button.setStyleSheet(f"background-color: {black}; color: white; border: none; padding: 5px 10px; margin: 0px;")
             tab_button.setContentsMargins(0, 0, 0, 0)
@@ -224,16 +346,16 @@ class Dock(QFrame):
             self.tab_buttons.append(tab_button)
             self.tab_bar.insertWidget(i, tab_button)
 
-            dw_instance = dw_class(self, True, 0, 0, int(math.ceil(self.w_ratio * parent.width())), int(math.ceil(self.h_ratio * parent.height())))
-            dw_instance.hide()
-            self.dockable_windows.append(dw_instance)
+            panel_instance = panel_class(self, True, 0, 0, int(math.ceil(self.w_ratio * parent.width())), int(math.ceil(self.h_ratio * parent.height())))
+            panel_instance.hide()
+            self.panels.append(panel_instance)
 
         self.layout.addWidget(self.tab_bar_widget, 0)
 
-        for dw in self.dockable_windows:
-            self.layout.addWidget(dw, 1)
+        for panel in self.panels:
+            self.layout.addWidget(panel, 1)
 
-        if self.dockable_windows:
+        if self.panels:
             self.switch_tab(0)
 
     def update_geometry(self):
@@ -247,8 +369,11 @@ class Dock(QFrame):
         dock_w = x_end - dock_x
         dock_h = y_end - dock_y
 
+        old_geometry = self.geometry()
         self.setGeometry(dock_x, dock_y, dock_w, dock_h)
-        self.repaint()
+
+        if old_geometry != self.geometry():
+            self.repaint()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -263,12 +388,12 @@ class Dock(QFrame):
         painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
 
     def switch_tab(self, index):
-        if 0 <= index < len(self.dockable_windows):
-            if 0 <= self.dockIndex < len(self.dockable_windows):
-                self.dockable_windows[self.dockIndex].hide()
+        if 0 <= index < len(self.panels):
+            if 0 <= self.dockIndex < len(self.panels):
+                self.panels[self.dockIndex].hide()
 
             self.dockIndex = index
-            self.dockable_windows[self.dockIndex].show()
+            self.panels[self.dockIndex].show()
 
             for i, button in enumerate(self.tab_buttons):
                 if i == index:
@@ -277,17 +402,15 @@ class Dock(QFrame):
                     button.setStyleSheet(f"background-color: {black}; color: white; border: none; padding: 5px 10px; margin: 0px; border-top-left-radius: 5px; border-top-right-radius: 5px;")
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasText() and event.mimeData().text() == "dockable_window":
+        if event.mimeData().hasText() and event.mimeData().text() == "panel":
             if Dock._drag_source_dock is not None:
-                # Accept the drag enter event regardless of position
-                # We'll check the actual position in dragMoveEvent
                 event.setDropAction(Qt.DropAction.MoveAction)
                 event.accept()
                 return
         event.ignore()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasText() and event.mimeData().text() == "dockable_window":
+        if event.mimeData().hasText() and event.mimeData().text() == "panel":
             if Dock._drag_source_dock is not None:
                 pos = event.position().toPoint() if hasattr(event.position(), 'toPoint') else event.pos()
                 if self._is_over_tab_bar(pos):
@@ -312,8 +435,8 @@ class Dock(QFrame):
             pos = event.position().toPoint() if hasattr(event.position(), 'toPoint') else event.pos()
 
             if self._is_over_tab_bar(pos):
-                dockable_window = source_dock.dockable_windows[window_index]
-                window_name = dockable_window.__class__.__name__
+                panel = source_dock.panels[window_index]
+                window_name = panel.__class__.__name__
 
                 insert_index = self.drop_insert_index if self.drop_insert_index >= 0 else self._calculate_insert_index(pos)
 
@@ -321,16 +444,16 @@ class Dock(QFrame):
                     if insert_index > window_index:
                         insert_index -= 1
                     if insert_index != window_index:
-                        source_dock.remove_dockable_window(window_index)
+                        source_dock.remove_panel(window_index)
                         self._hide_drop_preview()
-                        self.add_dockable_window(dockable_window, window_name, insert_index)
+                        self.add_panel(panel, window_name, insert_index)
                     else:
                         self._hide_drop_preview()
                 else:
-                    source_dock.remove_dockable_window(window_index)
+                    source_dock.remove_panel(window_index)
                     self._hide_drop_preview()
-                    self.add_dockable_window(dockable_window, window_name, insert_index)
-                    if self.parent is None and self.dockable_windows:
+                    self.add_panel(panel, window_name, insert_index)
+                    if self.parent is None and self.panels:
                         self.hide()
 
                 event.setDropAction(Qt.DropAction.MoveAction)
@@ -343,17 +466,17 @@ class Dock(QFrame):
                 self._hide_drop_preview()
 
                 # Create external dock at cursor position
-                window = source_dock.dockable_windows[window_index]
+                window = source_dock.panels[window_index]
                 window_name = window.__class__.__name__
 
                 from UI.dock import ExternalDock
                 external_dock = ExternalDock(window_name)
 
                 # Remove from source
-                source_dock.remove_dockable_window(window_index)
+                source_dock.remove_panel(window_index)
 
                 # Add to external dock
-                external_dock.dock.add_dockable_window(window, window_name, 0)
+                external_dock.dock.add_panel(window, window_name, 0)
 
                 # Position at cursor
                 cursor_pos = QCursor.pos()
@@ -415,6 +538,23 @@ class Dock(QFrame):
 
         return len(self.tab_buttons)
 
+    def _hide_dragged_tab(self, index):
+        if 0 <= index < len(self.tab_buttons):
+            self.tab_buttons[index].hide()
+            if self.dockIndex == index:
+                if len(self.panels) > 1:
+                    for i in range(len(self.panels)):
+                        if i != index:
+                            self.switch_tab(i)
+                            break
+                else:
+                    if 0 <= index < len(self.panels):
+                        self.panels[index].hide()
+
+    def _show_dragged_tab(self, index):
+        if 0 <= index < len(self.tab_buttons):
+            self.tab_buttons[index].show()
+
     def _update_drop_preview(self, pos):
         if Dock._drag_source_dock is None or Dock._drag_window_index is None:
             return
@@ -424,44 +564,124 @@ class Dock(QFrame):
         if self.preview_active and self.drop_insert_index == insert_index:
             return
 
-        self._hide_drop_preview()
+        if Dock._preview_dock and Dock._preview_dock != self:
+            Dock._preview_dock._hide_drop_preview()
 
         source_dock = Dock._drag_source_dock
         window_index = Dock._drag_window_index
-        dockable_window = source_dock.dockable_windows[window_index]
-        window_name = dockable_window.__class__.__name__
+        panel = source_dock.panels[window_index]
+        window_name = panel.__class__.__name__
+
+        is_same_dock = (Dock._preview_dock == self)
+
+        if not is_same_dock:
+            self._hide_drop_preview()
+
+            for dw in self.panels:
+                dw.hide()
+
+            if source_dock != self:
+                already_in_layout = False
+                for i in range(self.layout.count()):
+                    item = self.layout.itemAt(i)
+                    if item and item.widget() == panel:
+                        already_in_layout = True
+                        break
+
+                if not already_in_layout:
+                    source_dock.layout.removeWidget(panel)
+                    panel.setParent(self)
+                    self.layout.addWidget(panel, 1)
+
+            panel.show()
+            panel.raise_()
+        else:
+            if self.preview_button is not None:
+                self.tab_bar.removeWidget(self.preview_button)
+                self.preview_button.deleteLater()
 
         self.preview_button = QPushButton(window_name)
         self.preview_button.setFlat(True)
-        self.preview_button.setStyleSheet(f"background-color: {bg}; color: white; border: none; padding: 5px 10px; margin: 0px; opacity: 0.5;")
+        self.preview_button.setStyleSheet(f"background-color: {bg}; color: white; border: none; padding: 5px 10px; margin: 0px; border-top-left-radius: 5px; border-top-right-radius: 5px; opacity: 0.7;")
         self.preview_button.setContentsMargins(0, 0, 0, 0)
         self.preview_button.setEnabled(False)
 
         self.tab_bar.insertWidget(insert_index, self.preview_button)
+        self.preview_button.show()
 
         self.drop_insert_index = insert_index
         self.preview_active = True
+        Dock._preview_dock = self
 
     def _hide_drop_preview(self):
         if not self.preview_active:
             return
 
         if self.preview_button is not None:
+            self.preview_button.hide()
             self.tab_bar.removeWidget(self.preview_button)
+            self.preview_button.setParent(None)
             self.preview_button.deleteLater()
             self.preview_button = None
+
+        if Dock._drag_source_dock and Dock._drag_window_index is not None:
+            source_dock = Dock._drag_source_dock
+            window_index = Dock._drag_window_index
+            if 0 <= window_index < len(source_dock.panels):
+                panel = source_dock.panels[window_index]
+
+                if source_dock != self:
+                    panel.hide()
+
+                    for i in range(self.layout.count()):
+                        item = self.layout.itemAt(i)
+                        if item and item.widget() == panel:
+                            self.layout.removeWidget(panel)
+                            break
+
+                    panel.setParent(source_dock)
+
+                    already_in_layout = False
+                    for i in range(source_dock.layout.count()):
+                        item = source_dock.layout.itemAt(i)
+                        if item and item.widget() == panel:
+                            already_in_layout = True
+                            break
+
+                    if not already_in_layout:
+                        source_dock.layout.addWidget(panel, 1)
+
+                    if 0 <= source_dock.dockIndex < len(source_dock.panels):
+                        if Dock._drag_window_index == source_dock.dockIndex:
+                            pass
+                        else:
+                            source_dock.panels[source_dock.dockIndex].show()
+                else:
+                    panel.hide()
+
+        for dw in self.panels:
+            dw.hide()
+
+        if len(self.panels) > 0 and 0 <= self.dockIndex < len(self.panels):
+            if Dock._drag_source_dock == self and Dock._drag_window_index == self.dockIndex:
+                pass
+            else:
+                self.panels[self.dockIndex].show()
 
         self.drop_insert_index = -1
         self.preview_active = False
 
-    def remove_dockable_window(self, index):
-        if 0 <= index < len(self.dockable_windows):
-            dw = self.dockable_windows.pop(index)
+        if Dock._preview_dock == self:
+            Dock._preview_dock = None
+
+    def remove_panel(self, index):
+        if 0 <= index < len(self.panels):
+            panel = self.panels.pop(index)
             button = self.tab_buttons.pop(index)
 
-            dw.hide()
-            self.layout.removeWidget(dw)
-            dw.setParent(None)
+            panel.hide()
+            self.layout.removeWidget(panel)
+            panel.setParent(None)
 
             self.tab_bar.removeWidget(button)
             button.deleteLater()
@@ -471,8 +691,12 @@ class Dock(QFrame):
                 btn.clicked.disconnect()
                 btn.clicked.connect(lambda _, idx=i: self.switch_tab(idx))
 
-            if self.dockable_windows:
-                self.dockIndex = min(self.dockIndex, len(self.dockable_windows) - 1)
+            if self.panels:
+                # If we removed a panel before the active one, adjust the index
+                if index < self.dockIndex:
+                    self.dockIndex -= 1
+                # Make sure dockIndex is still valid
+                self.dockIndex = min(self.dockIndex, len(self.panels) - 1)
                 self.switch_tab(self.dockIndex)
             else:
                 self.dockIndex = 0
@@ -480,13 +704,13 @@ class Dock(QFrame):
                 if isinstance(self.parent, ExternalDock):
                     self.parent.close()
 
-    def add_dockable_window(self, dockable_window, window_name, insert_index=None, is_external=False):
+    def add_panel(self, panel, panel_name, insert_index=None, is_external=False):
         if insert_index is None:
-            insert_index = len(self.dockable_windows)
+            insert_index = len(self.panels)
 
-        insert_index = max(0, min(insert_index, len(self.dockable_windows)))
+        insert_index = max(0, min(insert_index, len(self.panels)))
 
-        tab_button = DraggableTabButton(window_name, self, insert_index)
+        tab_button = DraggableTabButton(panel_name, self, insert_index)
         tab_button.setFlat(True)
         tab_button.setStyleSheet(f"background-color: {black}; color: white; border: none; padding: 5px 10px; margin: 0px;")
         tab_button.setContentsMargins(0, 0, 0, 0)
@@ -494,10 +718,10 @@ class Dock(QFrame):
         self.tab_buttons.insert(insert_index, tab_button)
         self.tab_bar.insertWidget(insert_index, tab_button)
 
-        dockable_window.setParent(self)
-        dockable_window.hide()
-        self.dockable_windows.insert(insert_index, dockable_window)
-        self.layout.addWidget(dockable_window, 1)
+        panel.setParent(self)
+        panel.hide()
+        self.panels.insert(insert_index, panel)
+        self.layout.addWidget(panel, 1)
 
         for i, btn in enumerate(self.tab_buttons):
             btn.index = i
