@@ -323,7 +323,7 @@ class Dock(QFrame):
         self.layout.setSpacing(0)
 
         self.tab_bar_widget = QWidget()
-        self.tab_bar_widget.setStyleSheet("margin: 0px; padding: 0px; border: none;")
+        self.tab_bar_widget.setStyleSheet(f"background-color: {black}; margin: 0px; padding: 0px; border: none;")
         self.tab_bar_widget.setContentsMargins(0, 0, 0, 0)
         self.tab_bar_widget.setAcceptDrops(False)
         self.tab_bar_widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
@@ -333,6 +333,15 @@ class Dock(QFrame):
         self.tab_bar.setContentsMargins(0, 0, 0, 0)
         self.tab_bar.setSpacing(0)
         self.tab_bar.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+
+        # Create content area widget that always exists (even when no panels)
+        self.content_widget = QWidget()
+        self.content_widget.setStyleSheet(f"background-color: {bg}; margin: 0px; padding: 0px; border: none;")
+        self.content_widget.setContentsMargins(0, 0, 0, 0)
+
+        self.content_layout = QVBoxLayout(self.content_widget)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(0)
 
         for i, panel_class in enumerate(panels):
             tab_button = DraggableTabButton(panel_class.__name__, self, i)
@@ -351,9 +360,10 @@ class Dock(QFrame):
         self.tab_bar.addStretch()
 
         self.layout.addWidget(self.tab_bar_widget, 0)
+        self.layout.addWidget(self.content_widget, 1)  # Content widget always added with stretch
 
         for panel in self.panels:
-            self.layout.addWidget(panel, 1)
+            self.content_layout.addWidget(panel)
 
         if self.panels:
             self.switch_tab(0)
@@ -394,11 +404,205 @@ class Dock(QFrame):
         """Show context menu on right-click"""
         menu = QMenu(self)
 
+        # Style the menu for visibility
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #2b2b2b;
+                color: white;
+                border: 1px solid #555555;
+            }
+            QMenu::item {
+                padding: 5px 20px;
+                background-color: transparent;
+            }
+            QMenu::item:selected {
+                background-color: #3d3d3d;
+            }
+        """)
+
+        # Split dock submenu
+        split_menu = menu.addMenu("Split Dock")
+
+        split_left_action = QAction("Split Left", self)
+        split_left_action.triggered.connect(lambda: self.split_dock('left'))
+        split_menu.addAction(split_left_action)
+
+        split_right_action = QAction("Split Right", self)
+        split_right_action.triggered.connect(lambda: self.split_dock('right'))
+        split_menu.addAction(split_right_action)
+
+        split_top_action = QAction("Split Top", self)
+        split_top_action.triggered.connect(lambda: self.split_dock('top'))
+        split_menu.addAction(split_top_action)
+
+        split_bottom_action = QAction("Split Bottom", self)
+        split_bottom_action.triggered.connect(lambda: self.split_dock('bottom'))
+        split_menu.addAction(split_bottom_action)
+
+        # Add panel submenu
+        add_panel_menu = menu.addMenu("Add Panel")
+
+        # Get available panel classes
+        available_panels = self._get_available_panel_classes()
+        for panel_class in available_panels:
+            panel_action = QAction(panel_class.__name__, self)
+            panel_action.triggered.connect(lambda checked, pc=panel_class: self.add_panel_from_class(pc))
+            add_panel_menu.addAction(panel_action)
+
+        menu.addSeparator()
+
+        # Delete dock action
         delete_action = QAction("Delete Dock", self)
         delete_action.triggered.connect(self.delete_dock)
         menu.addAction(delete_action)
 
         menu.exec(event.globalPos())
+
+    def _get_available_panel_classes(self):
+        """Get all available panel classes from the project"""
+        from UI.panel import Panel
+        import inspect
+        import sys
+
+        # Collect all Panel subclasses
+        panel_classes = []
+
+        # Try to import known panel classes
+        try:
+            from UI.Docks.test_panel import TestPanel
+            panel_classes.append(TestPanel)
+        except ImportError:
+            pass
+
+        try:
+            from UI.Docks.test_panel2 import TestPanel2
+            panel_classes.append(TestPanel2)
+        except ImportError:
+            pass
+
+        # You can add more panel imports here as needed
+
+        return panel_classes
+
+    def add_panel_from_class(self, panel_class):
+        """Add a new panel instance to this dock"""
+        import math
+
+        # Create a new panel instance
+        panel_instance = panel_class(
+            self,
+            True,
+            0,
+            0,
+            int(math.ceil(self.w_ratio * self.parent.width())),
+            int(math.ceil(self.h_ratio * self.parent.height()))
+        )
+
+        # Add the panel to this dock
+        self.add_panel(panel_instance, panel_class.__name__)
+
+        # Switch to the newly added panel
+        self.switch_tab(len(self.panels) - 1)
+
+    def split_dock(self, direction):
+        """Split this dock in the specified direction (left, right, top, bottom)"""
+        if not hasattr(self.parent, 'add_dock') or not hasattr(self.parent, 'add_connector'):
+            return
+
+        from UI.hconnector import HConnector
+        from UI.vconnector import VConnector
+
+        if direction == 'left':
+            # Split dock horizontally - new dock on the left
+            split_ratio = 0.5
+            new_w_ratio = self.w_ratio * split_ratio
+
+            # Create new dock on the left
+            new_dock = Dock(self.parent, [], self.x_ratio, self.y_ratio, new_w_ratio, self.h_ratio)
+            self.parent.add_dock(new_dock)
+            new_dock.show()
+
+            # Adjust this dock
+            self.x_ratio = self.x_ratio + new_w_ratio
+            self.w_ratio = self.w_ratio - new_w_ratio
+            self.update_geometry()
+
+            # Create horizontal connector
+            connector = HConnector(self.parent, self.x_ratio, [new_dock], [self])
+            self.parent.add_connector(connector)
+
+            # Raise docks above connector
+            new_dock.raise_()
+            self.raise_()
+
+        elif direction == 'right':
+            # Split dock horizontally - new dock on the right
+            split_ratio = 0.5
+            new_w_ratio = self.w_ratio * split_ratio
+
+            # Adjust this dock first
+            self.w_ratio = self.w_ratio - new_w_ratio
+            new_x_ratio = self.x_ratio + self.w_ratio
+            self.update_geometry()
+
+            # Create new dock on the right
+            new_dock = Dock(self.parent, [], new_x_ratio, self.y_ratio, new_w_ratio, self.h_ratio)
+            self.parent.add_dock(new_dock)
+            new_dock.show()
+
+            # Create horizontal connector
+            connector = HConnector(self.parent, new_x_ratio, [self], [new_dock])
+            self.parent.add_connector(connector)
+
+            # Raise docks above connector
+            new_dock.raise_()
+            self.raise_()
+
+        elif direction == 'top':
+            # Split dock vertically - new dock on top
+            split_ratio = 0.5
+            new_h_ratio = self.h_ratio * split_ratio
+
+            # Create new dock on top
+            new_dock = Dock(self.parent, [], self.x_ratio, self.y_ratio, self.w_ratio, new_h_ratio)
+            self.parent.add_dock(new_dock)
+            new_dock.show()
+
+            # Adjust this dock
+            self.y_ratio = self.y_ratio + new_h_ratio
+            self.h_ratio = self.h_ratio - new_h_ratio
+            self.update_geometry()
+
+            # Create vertical connector
+            connector = VConnector(self.parent, self.y_ratio, [new_dock], [self])
+            self.parent.add_connector(connector)
+
+            # Raise docks above connector
+            new_dock.raise_()
+            self.raise_()
+
+        elif direction == 'bottom':
+            # Split dock vertically - new dock on bottom
+            split_ratio = 0.5
+            new_h_ratio = self.h_ratio * split_ratio
+
+            # Adjust this dock first
+            self.h_ratio = self.h_ratio - new_h_ratio
+            new_y_ratio = self.y_ratio + self.h_ratio
+            self.update_geometry()
+
+            # Create new dock on bottom
+            new_dock = Dock(self.parent, [], self.x_ratio, new_y_ratio, self.w_ratio, new_h_ratio)
+            self.parent.add_dock(new_dock)
+            new_dock.show()
+
+            # Create vertical connector
+            connector = VConnector(self.parent, new_y_ratio, [self], [new_dock])
+            self.parent.add_connector(connector)
+
+            # Raise docks above connector
+            new_dock.raise_()
+            self.raise_()
 
     def delete_dock(self):
         """Delete this dock and redistribute its space to neighbors"""
@@ -600,16 +804,16 @@ class Dock(QFrame):
 
             if source_dock != self:
                 already_in_layout = False
-                for i in range(self.layout.count()):
-                    item = self.layout.itemAt(i)
+                for i in range(self.content_layout.count()):
+                    item = self.content_layout.itemAt(i)
                     if item and item.widget() == panel:
                         already_in_layout = True
                         break
 
                 if not already_in_layout:
-                    source_dock.layout.removeWidget(panel)
+                    source_dock.content_layout.removeWidget(panel)
                     panel.setParent(self)
-                    self.layout.addWidget(panel, 1)
+                    self.content_layout.addWidget(panel)
 
             panel.show()
             panel.raise_()
@@ -653,23 +857,23 @@ class Dock(QFrame):
                 if source_dock != self:
                     panel.hide()
 
-                    for i in range(self.layout.count()):
-                        item = self.layout.itemAt(i)
+                    for i in range(self.content_layout.count()):
+                        item = self.content_layout.itemAt(i)
                         if item and item.widget() == panel:
-                            self.layout.removeWidget(panel)
+                            self.content_layout.removeWidget(panel)
                             break
 
                     panel.setParent(source_dock)
 
                     already_in_layout = False
-                    for i in range(source_dock.layout.count()):
-                        item = source_dock.layout.itemAt(i)
+                    for i in range(source_dock.content_layout.count()):
+                        item = source_dock.content_layout.itemAt(i)
                         if item and item.widget() == panel:
                             already_in_layout = True
                             break
 
                     if not already_in_layout:
-                        source_dock.layout.addWidget(panel, 1)
+                        source_dock.content_layout.addWidget(panel)
 
                     if 0 <= source_dock.dockIndex < len(source_dock.panels):
                         if Dock._drag_window_index == source_dock.dockIndex:
@@ -700,7 +904,7 @@ class Dock(QFrame):
             button = self.tab_buttons.pop(index)
 
             panel.hide()
-            self.layout.removeWidget(panel)
+            self.content_layout.removeWidget(panel)
             panel.setParent(None)
 
             self.tab_bar.removeWidget(button)
@@ -741,7 +945,7 @@ class Dock(QFrame):
         panel.setParent(self)
         panel.hide()
         self.panels.insert(insert_index, panel)
-        self.layout.addWidget(panel, 1)
+        self.content_layout.addWidget(panel)
 
         for i, btn in enumerate(self.tab_buttons):
             btn.index = i
