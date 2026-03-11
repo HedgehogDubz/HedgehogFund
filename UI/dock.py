@@ -512,97 +512,186 @@ class Dock(QFrame):
         from UI.hconnector import HConnector
         from UI.vconnector import VConnector
 
-        if direction == 'left':
-            # Split dock horizontally - new dock on the left
-            split_ratio = 0.5
-            new_w_ratio = self.w_ratio * split_ratio
+        match (direction):
+            case 'left' |'right':
+                # Split dock horizontally - new dock on the left
+                split_ratio = 0.5
+                new_w_ratio = self.w_ratio * split_ratio
 
-            # Create new dock on the left
-            new_dock = Dock(self.parent, [], self.x_ratio, self.y_ratio, new_w_ratio, self.h_ratio)
-            self.parent.add_dock(new_dock)
-            new_dock.show()
+                # Remove self from any HConnectors at its left edge (it will move right)
+                old_left_x = self.x_ratio
+                for conn in self.parent.connectors:
+                    if isinstance(conn, HConnector) and abs(conn.x_ratio - old_left_x) < 0.01:
+                        if self in conn.right_docks:
+                            conn.right_docks.remove(self)
 
-            # Adjust this dock
-            self.x_ratio = self.x_ratio + new_w_ratio
-            self.w_ratio = self.w_ratio - new_w_ratio
-            self.update_geometry()
+                # Create new dock on the left
+                new_dock = Dock(self.parent, [], self.x_ratio, self.y_ratio, new_w_ratio, self.h_ratio)
+                self.parent.add_dock(new_dock)
+                new_dock.show()
 
-            # Create horizontal connector
-            connector = HConnector(self.parent, self.x_ratio, [new_dock], [self])
-            self.parent.add_connector(connector)
+                # Adjust this dock
+                self.x_ratio = self.x_ratio + new_w_ratio
+                self.w_ratio = self.w_ratio - new_w_ratio
+                self.update_geometry()
 
-            # Raise docks above connector
-            new_dock.raise_()
-            self.raise_()
+                # Check if a connector already exists at this position
+                existing_connector = None
+                for conn in self.parent.connectors:
+                    if isinstance(conn, HConnector) and abs(conn.x_ratio - self.x_ratio) < 0.01:
+                        existing_connector = conn
+                        break
 
-        elif direction == 'right':
-            # Split dock horizontally - new dock on the right
-            split_ratio = 0.5
-            new_w_ratio = self.w_ratio * split_ratio
+                if existing_connector:
+                    # Update existing connector to include both docks (verify position)
+                    # new_dock is on the left (right edge touches connector)
+                    if new_dock not in existing_connector.left_docks and abs((new_dock.x_ratio + new_dock.w_ratio) - existing_connector.x_ratio) < 0.01:
+                        existing_connector.left_docks.append(new_dock)
+                    # self is on the right (left edge touches connector)
+                    if self not in existing_connector.right_docks and abs(self.x_ratio - existing_connector.x_ratio) < 0.01:
+                        existing_connector.right_docks.append(self)
+                else:
+                    # Find boundary connectors for the new HConnector
+                    top_connector = None
+                    bottom_connector = None
+                    for conn in self.parent.connectors:
+                        if isinstance(conn, VConnector):
+                            if abs(conn.y_ratio - self.y_ratio) < 0.01:
+                                top_connector = conn
+                            elif abs(conn.y_ratio - (self.y_ratio + self.h_ratio)) < 0.01:
+                                bottom_connector = conn
 
-            # Adjust this dock first
-            self.w_ratio = self.w_ratio - new_w_ratio
-            new_x_ratio = self.x_ratio + self.w_ratio
-            self.update_geometry()
+                    # Create new horizontal connector between the two docks
+                    connector = HConnector(self.parent, self.x_ratio, [new_dock], [self], top_connector, bottom_connector)
+                    self.parent.add_connector(connector)
 
-            # Create new dock on the right
-            new_dock = Dock(self.parent, [], new_x_ratio, self.y_ratio, new_w_ratio, self.h_ratio)
-            self.parent.add_dock(new_dock)
-            new_dock.show()
+                # Check if there's an existing left connector and add new_dock to it
+                for conn in self.parent.connectors:
+                    if isinstance(conn, HConnector) and abs(conn.x_ratio - new_dock.x_ratio) < 0.01:
+                        # new_dock's left edge touches this connector
+                        if new_dock not in conn.right_docks:
+                            conn.right_docks.append(new_dock)
 
-            # Create horizontal connector
-            connector = HConnector(self.parent, new_x_ratio, [self], [new_dock])
-            self.parent.add_connector(connector)
+                # Update existing vertical connectors to include both new_dock and self (only if they intersect)
+                for conn in self.parent.connectors:
+                    if isinstance(conn, VConnector):
+                        # Check if this VConnector intersects with the new dock's vertical range
+                        if new_dock.y_ratio <= conn.y_ratio <= (new_dock.y_ratio + new_dock.h_ratio):
+                            # Check which side of the connector the new_dock is on
+                            if abs((new_dock.y_ratio + new_dock.h_ratio) - conn.y_ratio) < 0.01:
+                                # new_dock's bottom edge touches connector → add to top_docks
+                                if new_dock not in conn.top_docks:
+                                    conn.top_docks.append(new_dock)
+                            elif abs(new_dock.y_ratio - conn.y_ratio) < 0.01:
+                                # new_dock's top edge touches connector → add to bottom_docks
+                                if new_dock not in conn.bottom_docks:
+                                    conn.bottom_docks.append(new_dock)
 
-            # Raise docks above connector
-            new_dock.raise_()
-            self.raise_()
+                        # Also check if this VConnector intersects with self's vertical range
+                        if self.y_ratio <= conn.y_ratio <= (self.y_ratio + self.h_ratio):
+                            # Check which side of the connector self is on
+                            if abs((self.y_ratio + self.h_ratio) - conn.y_ratio) < 0.01:
+                                # self's bottom edge touches connector → add to top_docks
+                                if self not in conn.top_docks:
+                                    conn.top_docks.append(self)
+                            elif abs(self.y_ratio - conn.y_ratio) < 0.01:
+                                # self's top edge touches connector → add to bottom_docks
+                                if self not in conn.bottom_docks:
+                                    conn.bottom_docks.append(self)
 
-        elif direction == 'top':
-            # Split dock vertically - new dock on top
-            split_ratio = 0.5
-            new_h_ratio = self.h_ratio * split_ratio
+                # Raise docks above connector
+                new_dock.raise_()
+                self.raise_(),
+            case 'top' | 'bottom':
+                # Split dock vertically - new dock on top
+                split_ratio = 0.5
+                new_h_ratio = self.h_ratio * split_ratio
 
-            # Create new dock on top
-            new_dock = Dock(self.parent, [], self.x_ratio, self.y_ratio, self.w_ratio, new_h_ratio)
-            self.parent.add_dock(new_dock)
-            new_dock.show()
+                # Remove self from any VConnectors at its top edge (it will move down)
+                old_top_y = self.y_ratio
+                for conn in self.parent.connectors:
+                    if isinstance(conn, VConnector) and abs(conn.y_ratio - old_top_y) < 0.01:
+                        if self in conn.bottom_docks:
+                            conn.bottom_docks.remove(self)
 
-            # Adjust this dock
-            self.y_ratio = self.y_ratio + new_h_ratio
-            self.h_ratio = self.h_ratio - new_h_ratio
-            self.update_geometry()
+                # Create new dock on top
+                new_dock = Dock(self.parent, [], self.x_ratio, self.y_ratio, self.w_ratio, new_h_ratio)
+                self.parent.add_dock(new_dock)
+                new_dock.show()
 
-            # Create vertical connector
-            connector = VConnector(self.parent, self.y_ratio, [new_dock], [self])
-            self.parent.add_connector(connector)
+                # Adjust this dock
+                self.y_ratio = self.y_ratio + new_h_ratio
+                self.h_ratio = self.h_ratio - new_h_ratio
+                self.update_geometry()
 
-            # Raise docks above connector
-            new_dock.raise_()
-            self.raise_()
+                # Check if a connector already exists at this position
+                existing_connector = None
+                for conn in self.parent.connectors:
+                    if isinstance(conn, VConnector) and abs(conn.y_ratio - self.y_ratio) < 0.01:
+                        existing_connector = conn
+                        break
 
-        elif direction == 'bottom':
-            # Split dock vertically - new dock on bottom
-            split_ratio = 0.5
-            new_h_ratio = self.h_ratio * split_ratio
+                if existing_connector:
+                    # Update existing connector to include both docks (verify position)
+                    # new_dock is on top (bottom edge touches connector)
+                    if new_dock not in existing_connector.top_docks and abs((new_dock.y_ratio + new_dock.h_ratio) - existing_connector.y_ratio) < 0.01:
+                        existing_connector.top_docks.append(new_dock)
+                    # self is on bottom (top edge touches connector)
+                    if self not in existing_connector.bottom_docks and abs(self.y_ratio - existing_connector.y_ratio) < 0.01:
+                        existing_connector.bottom_docks.append(self)
+                else:
+                    # Find boundary connectors for the new VConnector
+                    left_connector = None
+                    right_connector = None
+                    for conn in self.parent.connectors:
+                        if isinstance(conn, HConnector):
+                            if abs(conn.x_ratio - self.x_ratio) < 0.01:
+                                left_connector = conn
+                            elif abs(conn.x_ratio - (self.x_ratio + self.w_ratio)) < 0.01:
+                                right_connector = conn
 
-            # Adjust this dock first
-            self.h_ratio = self.h_ratio - new_h_ratio
-            new_y_ratio = self.y_ratio + self.h_ratio
-            self.update_geometry()
+                    # Create new vertical connector between the two docks
+                    connector = VConnector(self.parent, self.y_ratio, [new_dock], [self], left_connector, right_connector)
+                    self.parent.add_connector(connector)
 
-            # Create new dock on bottom
-            new_dock = Dock(self.parent, [], self.x_ratio, new_y_ratio, self.w_ratio, new_h_ratio)
-            self.parent.add_dock(new_dock)
-            new_dock.show()
+                # Check if there's an existing top connector and add new_dock to it
+                for conn in self.parent.connectors:
+                    if isinstance(conn, VConnector) and abs(conn.y_ratio - new_dock.y_ratio) < 0.01:
+                        # new_dock's top edge touches this connector
+                        if new_dock not in conn.bottom_docks:
+                            conn.bottom_docks.append(new_dock)
 
-            # Create vertical connector
-            connector = VConnector(self.parent, new_y_ratio, [self], [new_dock])
-            self.parent.add_connector(connector)
+                # Update existing horizontal connectors to include both new_dock and self (only if they intersect)
+                for conn in self.parent.connectors:
+                    if isinstance(conn, HConnector):
+                        # Check if this HConnector intersects with the new dock's horizontal range
+                        if new_dock.x_ratio <= conn.x_ratio <= (new_dock.x_ratio + new_dock.w_ratio):
+                            # Check which side of the connector the new_dock is on
+                            if abs((new_dock.x_ratio + new_dock.w_ratio) - conn.x_ratio) < 0.01:
+                                # new_dock's right edge touches connector → add to left_docks
+                                if new_dock not in conn.left_docks:
+                                    conn.left_docks.append(new_dock)
+                            elif abs(new_dock.x_ratio - conn.x_ratio) < 0.01:
+                                # new_dock's left edge touches connector → add to right_docks
+                                if new_dock not in conn.right_docks:
+                                    conn.right_docks.append(new_dock)
 
-            # Raise docks above connector
-            new_dock.raise_()
-            self.raise_()
+                        # Also check if this HConnector intersects with self's horizontal range
+                        if self.x_ratio <= conn.x_ratio <= (self.x_ratio + self.w_ratio):
+                            # Check which side of the connector self is on
+                            if abs((self.x_ratio + self.w_ratio) - conn.x_ratio) < 0.01:
+                                # self's right edge touches connector → add to left_docks
+                                if self not in conn.left_docks:
+                                    conn.left_docks.append(self)
+                            elif abs(self.x_ratio - conn.x_ratio) < 0.01:
+                                # self's left edge touches connector → add to right_docks
+                                if self not in conn.right_docks:
+                                    conn.right_docks.append(self)
+
+                # Raise docks above connector
+                new_dock.raise_()
+                self.raise_()
+
 
     def delete_dock(self):
         """Delete this dock and redistribute its space to neighbors"""

@@ -45,76 +45,122 @@ class Tab(QWidget):
             self.connectors.remove(connector)
             self.parent.remove_connector(connector)
 
-            if self.connector_manager:
+            if hasattr(self, 'connector_manager') and self.connector_manager:
                 self.connector_manager.remove_connector(connector)
 
     def delete_dock(self, dock):
-        """Delete a dock and redistribute its space to neighbors"""
+        """Delete a dock and redistribute its space to neighbors using connector information"""
         if dock not in self.docks:
             return
 
-        # Find horizontal and vertical neighbors
-        dock_left = dock.x_ratio
-        dock_right = dock.x_ratio + dock.w_ratio
-        dock_top = dock.y_ratio
-        dock_bottom = dock.y_ratio + dock.h_ratio
+        from UI.hconnector import HConnector
+        from UI.vconnector import VConnector
 
-        # Find connectors associated with this dock
-        connectors_to_remove = []
+        # Find neighbors using connectors (more reliable than edge detection)
+        left_neighbors = []
+        right_neighbors = []
+        top_neighbors = []
+        bottom_neighbors = []
+
+        h_connectors_with_dock = []
+        v_connectors_with_dock = []
+
         for connector in self.connectors:
-            if hasattr(connector, 'left_dock') and hasattr(connector, 'right_dock'):
-                # Horizontal connector
-                if connector.left_dock == dock or connector.right_dock == dock:
-                    connectors_to_remove.append(connector)
-            elif hasattr(connector, 'top_dock') and hasattr(connector, 'bottom_dock'):
-                # Vertical connector
-                if connector.top_dock == dock or connector.bottom_dock == dock:
-                    connectors_to_remove.append(connector)
+            if isinstance(connector, HConnector):
+                if dock in connector.left_docks:
+                    # Dock is on the left, so right_docks are right neighbors
+                    right_neighbors.extend(connector.right_docks)
+                    h_connectors_with_dock.append(connector)
+                elif dock in connector.right_docks:
+                    # Dock is on the right, so left_docks are left neighbors
+                    left_neighbors.extend(connector.left_docks)
+                    h_connectors_with_dock.append(connector)
+            elif isinstance(connector, VConnector):
+                if dock in connector.top_docks:
+                    # Dock is on top, so bottom_docks are bottom neighbors
+                    bottom_neighbors.extend(connector.bottom_docks)
+                    v_connectors_with_dock.append(connector)
+                elif dock in connector.bottom_docks:
+                    # Dock is on bottom, so top_docks are top neighbors
+                    top_neighbors.extend(connector.top_docks)
+                    v_connectors_with_dock.append(connector)
 
-        # Find neighbors to expand
-        left_neighbor = None
-        right_neighbor = None
-        top_neighbor = None
-        bottom_neighbor = None
+        # Remove duplicates
+        left_neighbors = list(set(left_neighbors))
+        right_neighbors = list(set(right_neighbors))
+        top_neighbors = list(set(top_neighbors))
+        bottom_neighbors = list(set(bottom_neighbors))
 
-        for other_dock in self.docks:
-            if other_dock == dock:
-                continue
+        # Determine expansion direction (prioritize horizontal)
+        expanding_neighbors = None
+        expansion_direction = None
+        connectors_to_remove = []
+        connectors_to_update = []
 
-            # Check for left neighbor (dock to the left that shares the left edge)
-            if abs((other_dock.x_ratio + other_dock.w_ratio) - dock_left) < 0.01:
-                if not (other_dock.y_ratio >= dock_bottom or (other_dock.y_ratio + other_dock.h_ratio) <= dock_top):
-                    left_neighbor = other_dock
+        if left_neighbors:
+            expanding_neighbors = left_neighbors
+            expansion_direction = 'left'
+            connectors_to_remove = h_connectors_with_dock
+            connectors_to_update = v_connectors_with_dock
+        elif right_neighbors:
+            expanding_neighbors = right_neighbors
+            expansion_direction = 'right'
+            connectors_to_remove = h_connectors_with_dock
+            connectors_to_update = v_connectors_with_dock
+        elif top_neighbors:
+            expanding_neighbors = top_neighbors
+            expansion_direction = 'top'
+            connectors_to_remove = v_connectors_with_dock
+            connectors_to_update = h_connectors_with_dock
+        elif bottom_neighbors:
+            expanding_neighbors = bottom_neighbors
+            expansion_direction = 'bottom'
+            connectors_to_remove = v_connectors_with_dock
+            connectors_to_update = h_connectors_with_dock
 
-            # Check for right neighbor (dock to the right that shares the right edge)
-            if abs(other_dock.x_ratio - dock_right) < 0.01:
-                if not (other_dock.y_ratio >= dock_bottom or (other_dock.y_ratio + other_dock.h_ratio) <= dock_top):
-                    right_neighbor = other_dock
+        # Expand neighbors
+        if expanding_neighbors and expansion_direction:
+            if expansion_direction == 'left':
+                # Left neighbors expand right
+                for neighbor in expanding_neighbors:
+                    neighbor.w_ratio += dock.w_ratio
+                    neighbor.update_geometry()
+            elif expansion_direction == 'right':
+                # Right neighbors expand left
+                for neighbor in expanding_neighbors:
+                    neighbor.x_ratio = dock.x_ratio
+                    neighbor.w_ratio += dock.w_ratio
+                    neighbor.update_geometry()
+            elif expansion_direction == 'top':
+                # Top neighbors expand down
+                for neighbor in expanding_neighbors:
+                    neighbor.h_ratio += dock.h_ratio
+                    neighbor.update_geometry()
+            elif expansion_direction == 'bottom':
+                # Bottom neighbors expand up
+                for neighbor in expanding_neighbors:
+                    neighbor.y_ratio = dock.y_ratio
+                    neighbor.h_ratio += dock.h_ratio
+                    neighbor.update_geometry()
 
-            # Check for top neighbor (dock above that shares the top edge)
-            if abs((other_dock.y_ratio + other_dock.h_ratio) - dock_top) < 0.01:
-                if not (other_dock.x_ratio >= dock_right or (other_dock.x_ratio + other_dock.w_ratio) <= dock_left):
-                    top_neighbor = other_dock
+            # Update connectors to replace dock with expanding neighbors
+            for connector in connectors_to_update:
+                if isinstance(connector, HConnector):
+                    if dock in connector.left_docks:
+                        connector.left_docks.remove(dock)
+                        connector.left_docks.extend(expanding_neighbors)
+                    elif dock in connector.right_docks:
+                        connector.right_docks.remove(dock)
+                        connector.right_docks.extend(expanding_neighbors)
+                elif isinstance(connector, VConnector):
+                    if dock in connector.top_docks:
+                        connector.top_docks.remove(dock)
+                        connector.top_docks.extend(expanding_neighbors)
+                    elif dock in connector.bottom_docks:
+                        connector.bottom_docks.remove(dock)
+                        connector.bottom_docks.extend(expanding_neighbors)
 
-            # Check for bottom neighbor (dock below that shares the bottom edge)
-            if abs(other_dock.y_ratio - dock_bottom) < 0.01:
-                if not (other_dock.x_ratio >= dock_right or (other_dock.x_ratio + other_dock.w_ratio) <= dock_left):
-                    bottom_neighbor = other_dock
-
-        # Expand neighbors to fill the gap
-        if left_neighbor:
-            left_neighbor.w_ratio += dock.w_ratio
-        elif right_neighbor:
-            right_neighbor.x_ratio = dock.x_ratio
-            right_neighbor.w_ratio += dock.w_ratio
-
-        if top_neighbor:
-            top_neighbor.h_ratio += dock.h_ratio
-        elif bottom_neighbor:
-            bottom_neighbor.y_ratio = dock.y_ratio
-            bottom_neighbor.h_ratio += dock.h_ratio
-
-        # Remove connectors
+        # Remove connectors on the expansion edge
         for connector in connectors_to_remove:
             connector.hide()
             connector.deleteLater()

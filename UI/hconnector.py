@@ -121,4 +121,3 @@ class HConnector(QWidget):
             return Qt.CursorShape.ClosedHandCursor
         return Qt.CursorShape.SplitHCursor
 
-
