@@ -1,7 +1,8 @@
 from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QVBoxLayout,
                               QLabel, QPushButton, QComboBox, QLineEdit,
-                              QCheckBox, QSlider, QListWidget, QAbstractItemView)
-from PyQt6.QtCore import Qt
+                              QCheckBox, QSlider, QListWidget, QAbstractItemView,
+                              QProgressBar, QCalendarWidget)
+from PyQt6.QtCore import Qt, QDate
 from tabdock._style_guide import bg, black
 from tabdock.panel_state import PanelStateManager
 
@@ -463,6 +464,138 @@ class Panel(QFrame):
                     lambda: callback([w.item(i).text() for i in range(w.count())
                                       if w.item(i).isSelected()])
                 )
+        self._root_layout.addWidget(w)
+        self._current_row = self._make_row()
+        return w
+
+    def add_progress_bar(self, minimum: int = 0, maximum: int = 100,
+                         value: int = 0, int_key: str = None,
+                         default: int = None) -> QProgressBar:
+        """Horizontal progress bar.
+
+        Args:
+            int_key: Syncs the bar value with shared state.
+            default: Initial value in state if the key is new.
+                     Falls back to `value`.
+        """
+        w = QProgressBar(self)
+        w.setMinimum(minimum)
+        w.setMaximum(maximum)
+        w.setValue(value)
+        w.setTextVisible(True)
+        w.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {self.widget_bg};
+                color: {self.text_color};
+                border: none;
+                border-radius: 4px;
+                height: 14px;
+                font-size: 11px;
+                text-align: center;
+            }}
+            QProgressBar::chunk {{
+                background-color: {self.accent_color};
+                border-radius: 4px;
+            }}
+        """)
+        if int_key is not None:
+            init_val = default if default is not None else value
+            self._init_key(int_key, init_val)
+            _syncing = [False]
+
+            def _sync(v):
+                _syncing[0] = True
+                w.setValue(int(v))
+                _syncing[0] = False
+            self._subscribe(int_key, _sync)
+        self._current_row.addWidget(w)
+        return w
+
+    def add_calendar(self, string_key: str = None,
+                     default: str = None,
+                     callback=None) -> QCalendarWidget:
+        """Monthly calendar widget (full width).
+
+        Dates are stored and passed as ISO strings ("YYYY-MM-DD").
+
+        Args:
+            string_key: Syncs the selected date across all instances via shared state.
+            default:    Initial date string if the key is new. Defaults to today.
+            callback:   Called with the selected date string on change.
+        """
+        w = QCalendarWidget(self)
+        w.setGridVisible(False)
+        w.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        w.setStyleSheet(f"""
+            QCalendarWidget QAbstractItemView {{
+                background-color: {self.widget_bg};
+                color: {self.text_color};
+                selection-background-color: {self.accent_color};
+                selection-color: {self.panel_bg};
+                border: none;
+                outline: none;
+            }}
+            QCalendarWidget QAbstractItemView:disabled {{
+                color: {self.widget_bg};
+            }}
+            QCalendarWidget QWidget#qt_calendar_navigationbar {{
+                background-color: {self.widget_bg};
+                border-radius: 4px;
+                padding: 2px;
+            }}
+            QCalendarWidget QToolButton {{
+                background-color: transparent;
+                color: {self.text_color};
+                border: none;
+                padding: 4px 8px;
+                font-size: 12px;
+            }}
+            QCalendarWidget QToolButton:hover {{
+                border: 1px solid {self.accent_color};
+                border-radius: 3px;
+            }}
+            QCalendarWidget QToolButton::menu-indicator {{
+                image: none;
+            }}
+            QCalendarWidget QSpinBox {{
+                background-color: {self.widget_bg};
+                color: {self.text_color};
+                border: none;
+                font-size: 12px;
+            }}
+            QCalendarWidget QMenu {{
+                background-color: {self.widget_bg};
+                color: {self.text_color};
+                border: none;
+            }}
+        """)
+
+        if string_key is not None:
+            init_val = default if default is not None else QDate.currentDate().toString("yyyy-MM-dd")
+            self._init_key(string_key, init_val)
+            _syncing = [False]
+
+            def _on_user_change(qdate: QDate):
+                if not _syncing[0]:
+                    date_str = qdate.toString("yyyy-MM-dd")
+                    self.state.set(string_key, date_str)
+                    if callback:
+                        callback(date_str)
+            w.selectionChanged.connect(lambda: _on_user_change(w.selectedDate()))
+
+            def _sync(date_str):
+                _syncing[0] = True
+                qdate = QDate.fromString(str(date_str), "yyyy-MM-dd")
+                if qdate.isValid():
+                    w.setSelectedDate(qdate)
+                _syncing[0] = False
+            self._subscribe(string_key, _sync)
+        else:
+            if callback:
+                w.selectionChanged.connect(
+                    lambda: callback(w.selectedDate().toString("yyyy-MM-dd"))
+                )
+
         self._root_layout.addWidget(w)
         self._current_row = self._make_row()
         return w
