@@ -11,6 +11,7 @@ class ConnectorManager(QObject):
         self.connectors: list = []
         self.active_connector = None
         self.current_cursor = Qt.CursorShape.ArrowCursor
+        self._cursor_widgets: set = set()  # widgets we've set a cursor on
         # Track last event to avoid duplicate processing as events bubble
         self.last_processed_event = None
 
@@ -71,19 +72,24 @@ class ConnectorManager(QObject):
 
         return closest_connector
 
-    def _set_cursor(self, cursor_shape):
-        """Set cursor only if it's different from current cursor."""
-
-        if self.current_cursor != cursor_shape:
-            self.current_cursor = cursor_shape
-            self.parent_widget.setCursor(cursor_shape)
+    def _set_cursor(self, cursor_shape, source_widget=None):
+        """Set cursor on the source widget and the parent widget."""
+        self.current_cursor = cursor_shape
+        self.parent_widget.setCursor(cursor_shape)
+        if source_widget is not None and source_widget is not self.parent_widget:
+            source_widget.setCursor(cursor_shape)
+            self._cursor_widgets.add(source_widget)
 
     def _unset_cursor(self):
-        """Restore default cursor."""
-
-        if self.current_cursor != Qt.CursorShape.ArrowCursor:
-            self.current_cursor = Qt.CursorShape.ArrowCursor
-            self.parent_widget.unsetCursor()
+        """Restore default cursor on parent and all modified child widgets."""
+        self.current_cursor = Qt.CursorShape.ArrowCursor
+        self.parent_widget.unsetCursor()
+        for w in self._cursor_widgets:
+            try:
+                w.unsetCursor()
+            except RuntimeError:
+                pass  # widget was deleted
+        self._cursor_widgets.clear()
 
     def eventFilter(self, obj, event):
         """Filter events on the parent widget to handle connector interactions."""
@@ -144,7 +150,7 @@ class ConnectorManager(QObject):
                     self.active_connector = closest
                     self.active_connector.start_drag(pos)
                     self._set_cursor(
-                        self.active_connector.get_cursor_shape(is_dragging=True)
+                        self.active_connector.get_cursor_shape(is_dragging=True), obj
                     )
                     return True
 
@@ -153,12 +159,12 @@ class ConnectorManager(QObject):
             active = self.active_connector
             if active:
                 active.update_drag(pos)
-                self._set_cursor(active.get_cursor_shape(is_dragging=True))
+                self._set_cursor(active.get_cursor_shape(is_dragging=True), obj)
                 return True
             else:
                 closest = self._find_closest_connector(pos, current_tab)
                 if closest:
-                    self._set_cursor(closest.get_cursor_shape(is_dragging=False))
+                    self._set_cursor(closest.get_cursor_shape(is_dragging=False), obj)
                 else:
                     self._unset_cursor()
 
@@ -174,7 +180,7 @@ class ConnectorManager(QObject):
 
                 closest = self._find_closest_connector(pos, current_tab)
                 if closest:
-                    self._set_cursor(closest.get_cursor_shape(is_dragging=False))
+                    self._set_cursor(closest.get_cursor_shape(is_dragging=False), obj)
                 else:
                     self._unset_cursor()
 
