@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QLabel, QApplication, QMenu
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QLabel, QApplication, QMenu, QScrollArea
 from PyQt6.QtGui import QPainter, QColor, QCursor, QAction
 from PyQt6.QtCore import Qt, QPoint
 from tabdock._style_guide import bg, black, border_color
@@ -368,7 +368,31 @@ class Dock(QFrame):
         self.tab_bar.setSpacing(self.tab_spacing)
         self.tab_bar.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
 
-        # Create content area widget that always exists (even when no panels)
+        # Create scrollable content area that always exists (even when no panels)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {self.content_bg};
+                border: none;
+            }}
+            QScrollBar:vertical {{
+                background: {self.content_bg};
+                width: 8px;
+                border-radius: 4px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {self.tab_bar_bg};
+                border-radius: 4px;
+                min-height: 20px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+        """)
+
         self.content_widget = QWidget()
         self.content_widget.setStyleSheet(f"background-color: {self.content_bg}; margin: 0px; padding: 0px; border: none;")
         self.content_widget.setContentsMargins(0, 0, 0, 0)
@@ -376,6 +400,8 @@ class Dock(QFrame):
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(0, 0, 0, 0)
         self.content_layout.setSpacing(0)
+
+        self.scroll_area.setWidget(self.content_widget)
 
         for i, panel_class in enumerate(panels):
             tab_button = DraggableTabButton(panel_class.__name__, self, i)
@@ -394,7 +420,7 @@ class Dock(QFrame):
         self.tab_bar.addStretch()
 
         self.layout.addWidget(self.tab_bar_widget, 0)
-        self.layout.addWidget(self.content_widget, 1)  # Content widget always added with stretch
+        self.layout.addWidget(self.scroll_area, 1)  # Scroll area always added with stretch
 
         for panel in self.panels:
             self.content_layout.addWidget(panel)
