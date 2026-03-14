@@ -3,9 +3,49 @@ from PyQt6.QtWidgets import (QFrame, QHBoxLayout, QVBoxLayout,
                               QCheckBox, QSlider, QListWidget, QAbstractItemView,
                               QProgressBar, QCalendarWidget)
 from PyQt6.QtCore import Qt, QDate
-from PyQt6.QtGui import QIntValidator, QDoubleValidator, QTextCharFormat, QColor
+from PyQt6.QtGui import (QIntValidator, QDoubleValidator, QTextCharFormat,
+                          QColor, QPainter, QPixmap, QPen, QPolygonF)
+from PyQt6.QtCore import QPointF
 from tabdock._style_guide import bg, black, lighten
 from tabdock.panel_state import PanelStateManager
+import tempfile
+import os
+
+_arrow_cache: dict[tuple[str, str], str] = {}
+
+
+def _make_arrow_pixmap(direction: str, color: str, size: int = 10) -> str:
+    """Generate a triangle arrow PNG and return its file path. Results are cached."""
+    cache_key = (direction, color)
+    if cache_key in _arrow_cache and os.path.exists(_arrow_cache[cache_key]):
+        return _arrow_cache[cache_key]
+
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(QColor(color), 0))
+    painter.setBrush(QColor(color))
+    m = 1  # margin
+    if direction == "down":
+        triangle = QPolygonF([
+            QPointF(m, m),
+            QPointF(size - m, m),
+            QPointF(size / 2, size - m),
+        ])
+    else:
+        triangle = QPolygonF([
+            QPointF(m, size - m),
+            QPointF(size - m, size - m),
+            QPointF(size / 2, m),
+        ])
+    painter.drawPolygon(triangle)
+    painter.end()
+
+    path = os.path.join(tempfile.gettempdir(), f"tabdock_arrow_{direction}_{color.lstrip('#')}.png")
+    pixmap.save(path, "PNG")
+    _arrow_cache[cache_key] = path
+    return path
 
 
 class Panel(QFrame):
@@ -199,22 +239,18 @@ class Panel(QFrame):
         w.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         _arrow_color = lighten(self.widget_bg, 0.45)
         if show_arrow:
+            _down_arrow = _make_arrow_pixmap("down", _arrow_color).replace("\\", "/")
+            _up_arrow = _make_arrow_pixmap("up", _arrow_color).replace("\\", "/")
             arrow_css = f"""
                 QComboBox::down-arrow {{
-                    border-left: 4px solid transparent;
-                    border-right: 4px solid transparent;
-                    border-top: 5px solid {_arrow_color};
-                    border-bottom: none;
-                    width: 0px;
-                    height: 0px;
+                    image: url({_down_arrow});
+                    width: 8px;
+                    height: 8px;
                 }}
                 QComboBox::down-arrow:on {{
-                    border-left: 4px solid transparent;
-                    border-right: 4px solid transparent;
-                    border-bottom: 5px solid {_arrow_color};
-                    border-top: none;
-                    width: 0px;
-                    height: 0px;
+                    image: url({_up_arrow});
+                    width: 8px;
+                    height: 8px;
                 }}
             """
         else:
