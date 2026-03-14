@@ -595,32 +595,19 @@ class Panel(QFrame):
             }}
             QScrollBar:vertical {{
                 background: {self.panel_bg};
-                width: 10px;
-                border-radius: 5px;
-                margin: 12px 0px;
+                width: 8px;
+                border-radius: 4px;
             }}
             QScrollBar::handle:vertical {{
                 background: {lighten(self.panel_bg, 0.25)};
-                border-radius: 5px;
+                border-radius: 4px;
                 min-height: 20px;
             }}
             QScrollBar::handle:vertical:hover {{
                 background: {lighten(self.panel_bg, 0.35)};
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 10px;
-                subcontrol-origin: margin;
-                background: {lighten(self.panel_bg, 0.25)};
-                border-radius: 5px;
-            }}
-            QScrollBar::add-line:vertical:hover, QScrollBar::sub-line:vertical:hover {{
-                background: {lighten(self.panel_bg, 0.35)};
-            }}
-            QScrollBar::sub-line:vertical {{
-                subcontrol-position: top;
-            }}
-            QScrollBar::add-line:vertical {{
-                subcontrol-position: bottom;
+                height: 0px;
             }}
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
                 background: none;
@@ -717,6 +704,8 @@ class Panel(QFrame):
         w = QCalendarWidget(self)
         w.setGridVisible(False)
         w.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        w.setMinimumWidth(0)
+        w.setMinimumSize(0, 0)
 
         # Make weekend days the same color as weekdays
         weekday_fmt = QTextCharFormat()

@@ -374,7 +374,7 @@ class Dock(QFrame):
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         _scroll_handle = lighten(self.content_bg, 0.25)
-        _scroll_arrow = lighten(self.content_bg, 0.35)
+        _scroll_hover = lighten(self.content_bg, 0.35)
         self.scroll_area.setStyleSheet(f"""
             QScrollArea {{
                 background-color: {self.content_bg};
@@ -382,48 +382,19 @@ class Dock(QFrame):
             }}
             QScrollBar:vertical {{
                 background: {self.content_bg};
-                width: 10px;
-                border-radius: 5px;
-                margin: 12px 0px;
+                width: 8px;
+                border-radius: 4px;
             }}
             QScrollBar::handle:vertical {{
                 background: {_scroll_handle};
-                border-radius: 5px;
+                border-radius: 4px;
                 min-height: 20px;
             }}
             QScrollBar::handle:vertical:hover {{
-                background: {_scroll_arrow};
+                background: {_scroll_hover};
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 10px;
-                subcontrol-origin: margin;
-                background: {_scroll_handle};
-                border-radius: 5px;
-            }}
-            QScrollBar::add-line:vertical:hover, QScrollBar::sub-line:vertical:hover {{
-                background: {_scroll_arrow};
-            }}
-            QScrollBar::sub-line:vertical {{
-                subcontrol-position: top;
-            }}
-            QScrollBar::add-line:vertical {{
-                subcontrol-position: bottom;
-            }}
-            QScrollBar::up-arrow:vertical {{
-                width: 6px;
-                height: 6px;
-                background: none;
-                border-left: 2px solid {self.content_bg};
-                border-top: 2px solid {self.content_bg};
-                transform: rotate(45deg);
-            }}
-            QScrollBar::down-arrow:vertical {{
-                width: 6px;
-                height: 6px;
-                background: none;
-                border-left: 2px solid {self.content_bg};
-                border-top: 2px solid {self.content_bg};
-                transform: rotate(45deg);
+                height: 0px;
             }}
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
                 background: none;

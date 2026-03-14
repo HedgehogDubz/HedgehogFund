@@ -81,7 +81,9 @@ class ConnectorManager(QObject):
     def _unset_cursor(self):
         """Restore default cursor."""
 
-        self._set_cursor(Qt.CursorShape.ArrowCursor)
+        if self.current_cursor != Qt.CursorShape.ArrowCursor:
+            self.current_cursor = Qt.CursorShape.ArrowCursor
+            self.parent_widget.unsetCursor()
 
     def eventFilter(self, obj, event):
         """Filter events on the parent widget to handle connector interactions."""
