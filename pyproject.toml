@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,11 +7,12 @@ name = "tabdock"
 version = "0.1.0"
 description = "A PyQt6 dockable layout framework for Python desktop applications"
 authors = [
-    { name="Tristan Winata", email="twinata@sas.upenn.edu"}
+    { name = "Tristan Winata", email = "twinata@sas.upenn.edu" }
 ]
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "PyQt6",
 ]
