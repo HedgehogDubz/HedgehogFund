@@ -86,6 +86,10 @@ class TabDock(QWidget):
         tab.setParent(self.tab_content_widget)
         tab.tab_content_widget = self.tab_content_widget
 
+        # Now that the tab (and all its children) live under tab_content_widget,
+        # re-scan so every child gets mouse tracking + the event filter.
+        self.connector_manager._enable_tracking_on_children()
+
         tab_button = QPushButton(tab.name)
         tab_button.setFixedHeight(self.tab_height - 10)
         tab_button.setStyleSheet(f"background-color: {self.tab_bar_bg}; color: {self.tab_text_color}; border: none; padding: {self.tab_button_padding}; border-bottom-left-radius: {self.tab_radius}px; border-bottom-right-radius: {self.tab_radius}px;")
