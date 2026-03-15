@@ -195,7 +195,8 @@ class Panel(QFrame):
     def add_toggle_button(self, text: str, bool_key: str,
                           default: bool = False,
                           on_text: str = None, off_text: str = None,
-                          callback=None) -> QPushButton:
+                          callback=None,
+                          bilateral_callback: bool = False) -> QPushButton:
         """Styled push button that toggles a shared bool state on each click.
 
         Args:
@@ -204,6 +205,8 @@ class Panel(QFrame):
             on_text:  Button label when state is True. Defaults to text.
             off_text: Button label when state is False. Defaults to text.
             callback: Called with the new bool value after each toggle.
+            bilateral_callback: If True, callback fires on all instances
+                                when any instance changes the value.
         """
         w = QPushButton(text, self)
         w.setStyleSheet(self._button_stylesheet())
@@ -212,20 +215,27 @@ class Panel(QFrame):
         def _on_click():
             new_val = not self.state.get(bool_key, default)
             self.state.set(bool_key, new_val)
-            if callback:
+            if callback and not bilateral_callback:
                 callback(new_val)
         w.clicked.connect(_on_click)
 
-        if on_text is not None or off_text is not None:
-            _on  = on_text  or text
-            _off = off_text or text
-            self._subscribe(bool_key, lambda v: w.setText(_on if v else _off))
+        def _on_sync(v):
+            if on_text is not None or off_text is not None:
+                _on  = on_text  or text
+                _off = off_text or text
+                w.setText(_on if v else _off)
+            if callback and bilateral_callback:
+                callback(v)
+
+        if on_text is not None or off_text is not None or (callback and bilateral_callback):
+            self._subscribe(bool_key, _on_sync)
         self._current_row.addWidget(w)
         return w
 
     def add_dropdown(self, options: list, callback=None,
                      string_key: str = None, default: str = None,
-                     show_arrow: bool = True) -> QComboBox:
+                     show_arrow: bool = True,
+                     bilateral_callback: bool = False) -> QComboBox:
         """Styled combo box / dropdown.
 
         Args:
@@ -233,6 +243,8 @@ class Panel(QFrame):
             default:    Initial selected text if the key is new.
                         Falls back to the first option if not given.
             show_arrow: Show a down/up arrow indicator (default True).
+            bilateral_callback: If True, callback fires on all instances
+                                when any instance changes the value.
         """
         w = QComboBox(self)
         w.addItems([str(o) for o in options])
@@ -296,7 +308,7 @@ class Panel(QFrame):
             def _on_user_change():
                 if not _syncing[0]:
                     self.state.set(string_key, w.currentText())
-                    if callback:
+                    if callback and not bilateral_callback:
                         callback(w.currentText())
             w.currentTextChanged.connect(_on_user_change)
 
@@ -306,6 +318,8 @@ class Panel(QFrame):
                 if idx >= 0:
                     w.setCurrentIndex(idx)
                 _syncing[0] = False
+                if callback and bilateral_callback:
+                    callback(str(val))
             self._subscribe(string_key, _sync)
         else:
             if callback:
@@ -314,12 +328,15 @@ class Panel(QFrame):
         return w
 
     def add_text_input(self, placeholder: str = "", callback=None,
-                       string_key: str = None, default: str = "") -> QLineEdit:
+                       string_key: str = None, default: str = "",
+                       bilateral_callback: bool = False) -> QLineEdit:
         """Styled single-line text input.
 
         Args:
             string_key: Syncs the text content with shared state.
             default:    Initial text if the key is new.
+            bilateral_callback: If True, callback fires on all instances
+                                when any instance changes the value.
         """
         w = QLineEdit(self)
         w.setPlaceholderText(placeholder)
@@ -343,7 +360,7 @@ class Panel(QFrame):
             def _on_user_change(text):
                 if not _syncing[0]:
                     self.state.set(string_key, text)
-                    if callback:
+                    if callback and not bilateral_callback:
                         callback(text)
             w.textChanged.connect(_on_user_change)
 
@@ -351,6 +368,8 @@ class Panel(QFrame):
                 _syncing[0] = True
                 w.setText(str(val))
                 _syncing[0] = False
+                if callback and bilateral_callback:
+                    callback(str(val))
             self._subscribe(string_key, _sync)
         else:
             if callback:
@@ -365,7 +384,8 @@ class Panel(QFrame):
                          max_value: float = None,
                          float_key: str = None,
                          default: float = None,
-                         callback=None) -> QLineEdit:
+                         callback=None,
+                         bilateral_callback: bool = False) -> QLineEdit:
         """Single-line number input with validation.
 
         Args:
@@ -376,6 +396,8 @@ class Panel(QFrame):
             float_key:     Syncs the numeric value with shared state.
             default:       Initial value if the key is new (defaults to 0).
             callback:      Called with the parsed numeric value on valid change.
+            bilateral_callback: If True, callback fires on all instances
+                                when any instance changes the value.
         """
         w = QLineEdit(self)
         w.setPlaceholderText(placeholder)
@@ -427,7 +449,7 @@ class Panel(QFrame):
                     v = _parse(text)
                     if v is not None:
                         self.state.set(float_key, v)
-                        if callback:
+                        if callback and not bilateral_callback:
                             callback(v)
             w.textChanged.connect(_on_user_change)
 
@@ -435,6 +457,8 @@ class Panel(QFrame):
                 _syncing[0] = True
                 w.setText(str(int(v)) if integers_only else str(v))
                 _syncing[0] = False
+                if callback and bilateral_callback:
+                    callback(v)
             self._subscribe(float_key, _sync)
         else:
             if callback:
@@ -447,12 +471,15 @@ class Panel(QFrame):
         return w
 
     def add_checkbox(self, text: str, callback=None,
-                     bool_key: str = None, default: bool = False) -> QCheckBox:
+                     bool_key: str = None, default: bool = False,
+                     bilateral_callback: bool = False) -> QCheckBox:
         """Styled checkbox.
 
         Args:
             bool_key: Syncs the checked state with shared state.
             default:  Initial checked value if the key is new.
+            bilateral_callback: If True, callback fires on all instances
+                                when any instance changes the value.
         """
         w = QCheckBox(text, self)
         w.setStyleSheet(f"""
@@ -481,7 +508,7 @@ class Panel(QFrame):
                 if not _syncing[0]:
                     val = bool(state)
                     self.state.set(bool_key, val)
-                    if callback:
+                    if callback and not bilateral_callback:
                         callback(val)
             w.stateChanged.connect(_on_user_change)
 
@@ -489,6 +516,8 @@ class Panel(QFrame):
                 _syncing[0] = True
                 w.setChecked(bool(val))
                 _syncing[0] = False
+                if callback and bilateral_callback:
+                    callback(bool(val))
             self._subscribe(bool_key, _sync)
         else:
             if callback:
@@ -498,13 +527,16 @@ class Panel(QFrame):
 
     def add_slider(self, minimum: int = 0, maximum: int = 100,
                    value: int = None, callback=None,
-                   int_key: str = None, default: int = None) -> QSlider:
+                   int_key: str = None, default: int = None,
+                   bilateral_callback: bool = False) -> QSlider:
         """Horizontal slider.
 
         Args:
             int_key: Syncs the slider value with shared state.
             default: Initial value in state if the key is new.
                      Falls back to `value`, then to `minimum`.
+            bilateral_callback: If True, callback fires on all instances
+                                when any instance changes the value.
         """
         w = QSlider(Qt.Orientation.Horizontal, self)
         w.setMinimum(minimum)
@@ -538,7 +570,7 @@ class Panel(QFrame):
             def _on_user_change(v):
                 if not _syncing[0]:
                     self.state.set(int_key, v)
-                    if callback:
+                    if callback and not bilateral_callback:
                         callback(v)
             w.valueChanged.connect(_on_user_change)
 
@@ -546,6 +578,8 @@ class Panel(QFrame):
                 _syncing[0] = True
                 w.setValue(int(v))
                 _syncing[0] = False
+                if callback and bilateral_callback:
+                    callback(int(v))
             self._subscribe(int_key, _sync)
         else:
             if callback:
@@ -555,7 +589,8 @@ class Panel(QFrame):
 
     def add_list(self, items: list, multi_select: bool = False,
                  list_key: str = None, default: list = None,
-                 callback=None) -> QListWidget:
+                 callback=None,
+                 bilateral_callback: bool = False) -> QListWidget:
         """Scrollable list widget (full width, expands vertically).
 
         Args:
@@ -564,6 +599,8 @@ class Panel(QFrame):
             list_key:     Syncs the selection across all instances via shared state.
             default:      Initial selection list if the key is new (default []).
             callback:     Called with list of selected strings on selection change.
+            bilateral_callback: If True, callback fires on all instances
+                                when any instance changes the value.
         """
         w = QListWidget(self)
         w.addItems([str(i) for i in items])
@@ -623,7 +660,7 @@ class Panel(QFrame):
                 selected = [w.item(i).text() for i in range(w.count())
                             if w.item(i).isSelected()]
                 self.state.set(list_key, selected)
-                if callback:
+                if callback and not bilateral_callback:
                     callback(selected)
 
             def _sync(selected):
@@ -633,6 +670,8 @@ class Panel(QFrame):
                     if w.item(i).text() in selected:
                         w.item(i).setSelected(True)
                 _syncing[0] = False
+                if callback and bilateral_callback:
+                    callback(selected)
 
             w.itemSelectionChanged.connect(_on_user_select)
             self._subscribe(list_key, _sync)
@@ -691,7 +730,8 @@ class Panel(QFrame):
 
     def add_calendar(self, string_key: str = None,
                      default: str = None,
-                     callback=None) -> QCalendarWidget:
+                     callback=None,
+                     bilateral_callback: bool = False) -> QCalendarWidget:
         """Monthly calendar widget (full width).
 
         Dates are stored and passed as ISO strings ("YYYY-MM-DD").
@@ -700,6 +740,8 @@ class Panel(QFrame):
             string_key: Syncs the selected date across all instances via shared state.
             default:    Initial date string if the key is new. Defaults to today.
             callback:   Called with the selected date string on change.
+            bilateral_callback: If True, callback fires on all instances
+                                when any instance changes the value.
         """
         w = QCalendarWidget(self)
         w.setGridVisible(False)
@@ -819,7 +861,7 @@ class Panel(QFrame):
                 if not _syncing[0]:
                     date_str = qdate.toString("yyyy-MM-dd")
                     self.state.set(string_key, date_str)
-                    if callback:
+                    if callback and not bilateral_callback:
                         callback(date_str)
             w.selectionChanged.connect(lambda: _on_user_change(w.selectedDate()))
 
@@ -829,6 +871,8 @@ class Panel(QFrame):
                 if qdate.isValid():
                     w.setSelectedDate(qdate)
                 _syncing[0] = False
+                if callback and bilateral_callback:
+                    callback(str(date_str))
             self._subscribe(string_key, _sync)
         else:
             if callback:
