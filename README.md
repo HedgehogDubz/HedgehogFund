@@ -1,6 +1,6 @@
 # TabDock UI Framework
 
-A PyQt6 dockable layout framework. The UI is made up of tabs, each containing resizable docks, each dock containing one or more panels inspired largely by the design of game engines, IDEs, and art programs. Users can resize docks by dragging the dividers between them, rearrange panels within docks by dragging their tab buttons, and tear panels out into floating windows. There is also a shared state mechanism that lets panels communicate with each other even when they're in different docks. This framework is meant to be an easy-to-plug-in UI layer for any Python application.
+A PyQt6 dockable layout framework made up of tabs, each containing resizable docks, each dock containing panels inspired largely by the design of game engines, IDEs, and art programs. Users can resize docks by dragging the dividers between them, rearrange panels within docks by dragging their tab buttons, and tear panels out into floating windows. There is also a shared state mechanism that lets panels communicate with each other even when they're in different docks. This framework is meant to be an easy-to-plug-in UI layer for any Python application.
 
 Provides support for themes from:
 https://github.com/beatreichenbach/qt-themes?tab=readme-ov-file
