@@ -1,4 +1,5 @@
 from PyQt6.QtCore import Qt, QObject, QEvent
+from PyQt6.QtWidgets import QApplication
 from tabdock.tab import Tab
 
 
@@ -10,22 +11,18 @@ class ConnectorManager(QObject):
         self.parent_widget = parent
         self.connectors: list = []
         self.active_connector = None
-        self.current_cursor = Qt.CursorShape.ArrowCursor
-        self._cursor_widgets: set = set()  # widgets we've set a cursor on
-        # Track last event to avoid duplicate processing as events bubble
-        self.last_processed_event = None
+        self._override_active = False
 
-        # Enable mouse tracking so we get mouse move events even without buttons pressed
+        # Enable mouse tracking on parent
         parent.setMouseTracking(True)
 
-        # Install event filter on parent widget
-        parent.installEventFilter(self)
+        # Install event filter at the APPLICATION level so we see every event
+        # regardless of which child widget the mouse is over.
+        QApplication.instance().installEventFilter(self)
 
     def add_connector(self, connector):
         """Register a connector (HConnector or VConnector) with the manager."""
         self.connectors.append(connector)
-
-        # Enable mouse tracking on all child widgets (in case new ones were added)
         self._enable_tracking_on_children()
 
     def remove_connector(self, connector):
@@ -34,15 +31,13 @@ class ConnectorManager(QObject):
             self.connectors.remove(connector)
 
     def _enable_tracking_on_children(self):
-        """Enable mouse tracking on all child widgets AND install event filter on them."""
+        """Enable mouse tracking on all child widgets."""
         from PyQt6.QtWidgets import QWidget
 
         children = self.parent_widget.findChildren(QWidget)
         for child in children:
             if not child.hasMouseTracking():
                 child.setMouseTracking(True)
-            # Install event filter on children so we can intercept events before they're consumed
-            child.installEventFilter(self)
 
     def _find_closest_connector(self, pos, current_tab=None):
         """Find the connector closest to the given position.
@@ -57,8 +52,6 @@ class ConnectorManager(QObject):
         min_distance = float("inf")
 
         for connector in self.connectors:
-            # If we know which Tab this event came from, restrict candidates
-            # to connectors that belong to that Tab.
             if current_tab is not None:
                 connector_tab = getattr(connector, "tab", None)
                 if connector_tab is not None and connector_tab is not current_tab:
@@ -72,32 +65,27 @@ class ConnectorManager(QObject):
 
         return closest_connector
 
-    def _set_cursor(self, cursor_shape, source_widget=None):
-        """Set cursor on the source widget and the parent widget."""
-        self.current_cursor = cursor_shape
-        self.parent_widget.setCursor(cursor_shape)
-        if source_widget is not None and source_widget is not self.parent_widget:
-            source_widget.setCursor(cursor_shape)
-            self._cursor_widgets.add(source_widget)
+    def _set_override_cursor(self, cursor_shape):
+        """Set application-wide override cursor."""
+        if self._override_active:
+            QApplication.restoreOverrideCursor()
+        QApplication.setOverrideCursor(cursor_shape)
+        self._override_active = True
 
-    def _unset_cursor(self):
-        """Restore default cursor on parent and all modified child widgets."""
-        self.current_cursor = Qt.CursorShape.ArrowCursor
-        self.parent_widget.unsetCursor()
-        for w in self._cursor_widgets:
-            try:
-                w.unsetCursor()
-            except RuntimeError:
-                pass  # widget was deleted
-        self._cursor_widgets.clear()
+    def _restore_cursor(self):
+        """Remove the application-wide override cursor."""
+        if self._override_active:
+            QApplication.restoreOverrideCursor()
+            self._override_active = False
 
-    def _get_pos(self, obj, event):
-        """Extract position in parent_widget coordinates from a mouse event."""
-        if not hasattr(event, "pos"):
-            return None
-        if obj == self.parent_widget:
-            return event.pos()
-        return obj.mapTo(self.parent_widget, event.pos())
+    def _is_child_of_parent(self, widget):
+        """Check if widget is the parent_widget or one of its descendants."""
+        w = widget
+        while w is not None:
+            if w is self.parent_widget:
+                return True
+            w = w.parentWidget()
+        return False
 
     def _get_current_tab(self, obj):
         """Walk up from obj to find the Tab ancestor, if any."""
@@ -109,14 +97,14 @@ class ConnectorManager(QObject):
         return None
 
     def eventFilter(self, obj, event):
-        """Filter events on the parent widget to handle connector interactions."""
+        """Application-level event filter to handle connector interactions."""
 
         event_type = event.type()
 
-        # Handle Leave early — it has no position data
+        # Handle Leave — restore cursor if leaving our widget tree
         if event_type == QEvent.Type.Leave:
-            if not self.active_connector:
-                self._unset_cursor()
+            if obj is self.parent_widget and not self.active_connector:
+                self._restore_cursor()
             return False
 
         if event_type not in (
@@ -126,9 +114,19 @@ class ConnectorManager(QObject):
         ):
             return False
 
-        pos = self._get_pos(obj, event)
-        if pos is None:
+        # Only handle events from widgets inside our parent tree
+        from PyQt6.QtWidgets import QWidget
+        if not isinstance(obj, QWidget) or not self._is_child_of_parent(obj):
             return False
+
+        if not hasattr(event, "pos"):
+            return False
+
+        # Map position to parent_widget coordinates
+        if obj is self.parent_widget:
+            pos = event.pos()
+        else:
+            pos = obj.mapTo(self.parent_widget, event.pos())
 
         current_tab = self._get_current_tab(obj)
 
@@ -139,8 +137,8 @@ class ConnectorManager(QObject):
                 if closest:
                     self.active_connector = closest
                     self.active_connector.start_drag(pos)
-                    self._set_cursor(
-                        self.active_connector.get_cursor_shape(is_dragging=True), obj
+                    self._set_override_cursor(
+                        self.active_connector.get_cursor_shape(is_dragging=True)
                     )
                     return True
 
@@ -149,14 +147,14 @@ class ConnectorManager(QObject):
             active = self.active_connector
             if active:
                 active.update_drag(pos)
-                self._set_cursor(active.get_cursor_shape(is_dragging=True), obj)
+                self._set_override_cursor(active.get_cursor_shape(is_dragging=True))
                 return True
             else:
                 closest = self._find_closest_connector(pos, current_tab)
                 if closest:
-                    self._set_cursor(closest.get_cursor_shape(is_dragging=False), obj)
+                    self._set_override_cursor(closest.get_cursor_shape(is_dragging=False))
                 else:
-                    self._unset_cursor()
+                    self._restore_cursor()
 
         # Handle mouse release
         elif event_type == QEvent.Type.MouseButtonRelease:
@@ -165,9 +163,9 @@ class ConnectorManager(QObject):
 
                 closest = self._find_closest_connector(pos, current_tab)
                 if closest:
-                    self._set_cursor(closest.get_cursor_shape(is_dragging=False), obj)
+                    self._set_override_cursor(closest.get_cursor_shape(is_dragging=False))
                 else:
-                    self._unset_cursor()
+                    self._restore_cursor()
 
                 self.active_connector = None
                 return True

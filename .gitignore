@@ -1,2 +1,4 @@
 .claude
 .venv
+test.py
+run.sh
